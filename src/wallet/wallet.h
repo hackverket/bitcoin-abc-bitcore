@@ -260,6 +260,7 @@ public:
      * absurd fee.
      */
     bool AcceptToMemoryPool(const Amount nAbsurdFee, CValidationState &state);
+    bool AcceptToMemoryPoolNonStandard(const Amount nAbsurdFee, CValidationState &state);
     bool hashUnset() const {
         return (hashBlock.IsNull() || hashBlock == ABANDON_HASH);
     }

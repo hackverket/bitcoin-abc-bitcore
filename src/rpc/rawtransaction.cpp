@@ -1201,7 +1201,7 @@ static UniValue signrawtransaction(const Config &config,
 static UniValue sendrawtransaction(const Config &config,
                                    const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() < 1 ||
-        request.params.size() > 2) {
+        request.params.size() > 3) {
         throw std::runtime_error(
             "sendrawtransaction \"hexstring\" ( allowhighfees )\n"
             "\nSubmits raw transaction (serialized, hex-encoded) to local node "
@@ -1246,6 +1246,10 @@ static UniValue sendrawtransaction(const Config &config,
         nMaxRawTxFee = Amount(0);
     }
 
+    bool fAllowNonStandard = false;
+    if (request.params.size() > 2)
+        fAllowNonStandard = true;
+
     CCoinsViewCache &view = *pcoinsTip;
     bool fHaveChain = false;
     for (size_t o = 0; !fHaveChain && o < tx->vout.size(); o++) {
@@ -1258,21 +1262,40 @@ static UniValue sendrawtransaction(const Config &config,
         // Push to local node and sync with wallets.
         CValidationState state;
         bool fMissingInputs;
-        if (!AcceptToMemoryPool(config, mempool, state, std::move(tx),
-                                fLimitFree, &fMissingInputs, false,
-                                nMaxRawTxFee)) {
-            if (state.IsInvalid()) {
-                throw JSONRPCError(RPC_TRANSACTION_REJECTED,
-                                   strprintf("%i: %s", state.GetRejectCode(),
-                                             state.GetRejectReason()));
-            } else {
-                if (fMissingInputs) {
-                    throw JSONRPCError(RPC_TRANSACTION_ERROR, "Missing inputs");
-                }
+        if (fAllowNonStandard) {
+		if (!AcceptToMemoryPoolNonStandard(config, mempool, state, std::move(tx),
+		                        fLimitFree, &fMissingInputs, false,
+		                        nMaxRawTxFee)) {
+		    if (state.IsInvalid()) {
+		        throw JSONRPCError(RPC_TRANSACTION_REJECTED,
+		                           strprintf("%i: %s", state.GetRejectCode(),
+		                                     state.GetRejectReason()));
+		    } else {
+		        if (fMissingInputs) {
+		            throw JSONRPCError(RPC_TRANSACTION_ERROR, "Missing inputs");
+		        }
 
-                throw JSONRPCError(RPC_TRANSACTION_ERROR,
-                                   state.GetRejectReason());
-            }
+		        throw JSONRPCError(RPC_TRANSACTION_ERROR,
+		                           state.GetRejectReason());
+		    }
+		}
+        } else {
+		if (!AcceptToMemoryPool(config, mempool, state, std::move(tx),
+		                        fLimitFree, &fMissingInputs, false,
+		                        nMaxRawTxFee)) {
+		    if (state.IsInvalid()) {
+		        throw JSONRPCError(RPC_TRANSACTION_REJECTED,
+		                           strprintf("%i: %s", state.GetRejectCode(),
+		                                     state.GetRejectReason()));
+		    } else {
+		        if (fMissingInputs) {
+		            throw JSONRPCError(RPC_TRANSACTION_ERROR, "Missing inputs");
+		        }
+
+		        throw JSONRPCError(RPC_TRANSACTION_ERROR,
+		                           state.GetRejectReason());
+		    }
+		}
         }
     } else if (fHaveChain) {
         throw JSONRPCError(RPC_TRANSACTION_ALREADY_IN_CHAIN,

@@ -433,6 +433,12 @@ bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
                         bool fOverrideMempoolLimit = false,
                         const Amount nAbsurdFee = Amount(0));
 
+bool AcceptToMemoryPoolNonStandard(const Config &config, CTxMemPool &pool,
+                        CValidationState &state, const CTransactionRef &tx,
+                        bool fLimitFree, bool *pfMissingInputs,
+                        bool fOverrideMempoolLimit = false,
+                        const Amount nAbsurdFee = Amount(0));
+
 /** Convert CValidationState to a human-readable message for logging */
 std::string FormatStateMessage(const CValidationState &state);
 
