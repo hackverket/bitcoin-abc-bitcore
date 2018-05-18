@@ -1344,12 +1344,9 @@ static bool AcceptToMemoryPoolWorkerNonStandard(
                          DEFAULT_DESCENDANT_SIZE_LIMIT) *
             1000;
         std::string errString;
-        if (false && !pool.CalculateMemPoolAncestors(
+        pool.CalculateMemPoolAncestors(
                 entry, setAncestors, nLimitAncestors, nLimitAncestorSize,
-                nLimitDescendants, nLimitDescendantSize, errString)) {
-            return state.DoS(0, false, REJECT_NONSTANDARD,
-                             "too-long-mempool-chain", false, errString);
-        }
+                nLimitDescendants, nLimitDescendantSize, errString));
 
         // Set extraFlags as a set of flags that needs to be activated.
         uint32_t extraFlags = SCRIPT_VERIFY_NONE;
