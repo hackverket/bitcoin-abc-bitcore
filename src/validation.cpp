@@ -1346,7 +1346,7 @@ static bool AcceptToMemoryPoolWorkerNonStandard(
         std::string errString;
         pool.CalculateMemPoolAncestors(
                 entry, setAncestors, nLimitAncestors, nLimitAncestorSize,
-                nLimitDescendants, nLimitDescendantSize, errString));
+                nLimitDescendants, nLimitDescendantSize, errString);
 
         // Set extraFlags as a set of flags that needs to be activated.
         uint32_t extraFlags = SCRIPT_VERIFY_NONE;
