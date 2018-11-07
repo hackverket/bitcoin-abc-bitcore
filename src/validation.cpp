@@ -565,7 +565,7 @@ static bool AcceptToMemoryPoolWorker(
         // This mitigates 'penny-flooding' -- sending thousands of free
         // transactions just to be annoying or make others' transactions take
         // longer to confirm.
-        if (fLimitFree && nModifiedFees < minRelayTxFee.GetFee(nSize)) {
+        if (false && fLimitFree && nModifiedFees < minRelayTxFee.GetFee(nSize)) {
             static CCriticalSection csFreeLimiter;
             static double dFreeCount;
             static int64_t nLastTime;
