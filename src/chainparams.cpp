@@ -227,6 +227,9 @@ public:
                 // Monolith activation.
                 {530359, uint256S("0000000000000000011ada8bd08f46074f44a8f15539"
                                   "6f43e38acf9501c49103")},
+                // CTOR activation.
+                {556890, uint256S("0000000000000000006fb6ee910c3e6120d7b631da24"
+                                  "ac9414c33d6a500fcfa5")},
             }};
 
         // Data as of block
