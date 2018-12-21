@@ -386,7 +386,7 @@ static bool AcceptToMemoryPoolWorker(
     const Config &config, CTxMemPool &pool, CValidationState &state,
     const CTransactionRef &ptx, bool fLimitFree, bool *pfMissingInputs,
     int64_t nAcceptTime, bool fOverrideMempoolLimit, const Amount nAbsurdFee,
-    std::vector<COutPoint> &coins_to_uncache) {
+    std::vector<COutPoint> &coins_to_uncache, bool dryrun = false) {
     AssertLockHeld(cs_main);
 
     const CTransaction &tx = *ptx;
@@ -717,6 +717,10 @@ static bool AcceptToMemoryPoolWorker(
         bool validForFeeEstimation =
             IsCurrentForFeeEstimation() && pool.HasNoInputsOf(tx);
 
+        if (dryrun) {
+            return true;
+        }
+
         // Store transaction in memory.
         pool.addUnchecked(txid, entry, setAncestors, validForFeeEstimation);
 
@@ -742,7 +746,6 @@ static bool AcceptToMemoryPoolWorker(
             }
         }
     }
-
     GetMainSignals().TransactionAddedToMempool(ptx);
     return true;
 }
@@ -754,11 +757,11 @@ static bool AcceptToMemoryPoolWithTime(
     const Config &config, CTxMemPool &pool, CValidationState &state,
     const CTransactionRef &tx, bool fLimitFree, bool *pfMissingInputs,
     int64_t nAcceptTime, bool fOverrideMempoolLimit = false,
-    const Amount nAbsurdFee = Amount::zero()) {
+    const Amount nAbsurdFee = Amount::zero(), bool dryrun = false) {
     std::vector<COutPoint> coins_to_uncache;
     bool res = AcceptToMemoryPoolWorker(
         config, pool, state, tx, fLimitFree, pfMissingInputs, nAcceptTime,
-        fOverrideMempoolLimit, nAbsurdFee, coins_to_uncache);
+        fOverrideMempoolLimit, nAbsurdFee, coins_to_uncache, dryrun);
     if (!res) {
         for (const COutPoint &outpoint : coins_to_uncache) {
             pcoinsTip->Uncache(outpoint);
@@ -776,10 +779,10 @@ static bool AcceptToMemoryPoolWithTime(
 bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
                         CValidationState &state, const CTransactionRef &tx,
                         bool fLimitFree, bool *pfMissingInputs,
-                        bool fOverrideMempoolLimit, const Amount nAbsurdFee) {
+                        bool fOverrideMempoolLimit, const Amount nAbsurdFee, bool dryrun) {
     return AcceptToMemoryPoolWithTime(config, pool, state, tx, fLimitFree,
                                       pfMissingInputs, GetTime(),
-                                      fOverrideMempoolLimit, nAbsurdFee);
+                                      fOverrideMempoolLimit, nAbsurdFee, dryrun);
 }
 
 bool GetTimestampIndex(const unsigned int &high, const unsigned int &low, const bool fActiveOnly, std::vector<std::pair<uint256, unsigned int> > &hashes)
