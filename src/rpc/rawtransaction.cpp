@@ -1499,15 +1499,17 @@ static UniValue validaterawtransaction(const Config &config,
         const Coin &existingCoin = view.AccessCoin(COutPoint(txid, o));
         fHaveChain = !existingCoin.IsSpent();
     }
-
+    UniValue result(UniValue::VOBJ);
     bool fHaveMempool = g_mempool.exists(txid);
     if (!fHaveMempool && !fHaveChain) {
         // Push to local node and sync with wallets.
         CValidationState state;
         bool fMissingInputs;
-        if (!AcceptToMemoryPool(config, g_mempool, state, std::move(tx),
+        result = VerifyTransactionWithMemoryPool(config, g_mempool, state, std::move(tx),
                                 fLimitFree, &fMissingInputs, false,
-                                nMaxRawTxFee, true)) {
+                                nMaxRawTxFee);
+        /*
+        if (result.exists("minable") && result["minable"].isFalse()) {
             if (state.IsInvalid()) {
                 throw JSONRPCError(RPC_TRANSACTION_REJECTED,
                                    strprintf("%i: %s", state.GetRejectCode(),
@@ -1521,21 +1523,29 @@ static UniValue validaterawtransaction(const Config &config,
                                    state.GetRejectReason());
             }
         }
+        */
     } else if (fHaveChain) {
         throw JSONRPCError(RPC_TRANSACTION_ALREADY_IN_CHAIN,
                            "transaction already in block chain");
     }
 
+    /*
     if (!g_connman) {
         throw JSONRPCError(
             RPC_CLIENT_P2P_DISABLED,
             "Error: Peer-to-peer functionality missing or disabled");
     }
+    */
 
-    UniValue result(UniValue::VOBJ);
-    TxToUniv(CTransaction(std::move(mtx)), uint256(), result, false);
+    // UniValue result(UniValue::VOBJ);
+    // TxToJSON(config, CTransaction(std::move(mtx)), uint256(), result);
 
-    result.pushKV("valid", true);
+    // result.pushKV("valid", true);
+    if (result.exists("futureMinable") && result["futureMinable"].isTrue() && result.exists("standard") && result["standard"].isTrue()) {
+        result.pushKV("valid", true);
+    } else {
+        result.pushKV("valid", false);
+    }
 
     return result;
 }

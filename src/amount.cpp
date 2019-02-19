@@ -14,3 +14,6 @@ std::string Amount::ToString() const {
     return strprintf("%d.%08d %s", *this / COIN, (*this % COIN) / SATOSHI,
                      CURRENCY_UNIT);
 }
+int64_t Amount::ToInt64() const {
+    return *this / SATOSHI;
+}
