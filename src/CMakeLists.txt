@@ -33,15 +33,23 @@ add_compiler_flag(
 	-Wformat-security
 	-Wcast-align
 	-Wunused-parameter
+	-Wmissing-braces
+	# FIXME: Activating this flag cause cmake to fail on leveldb.
+	# -Wthread-safety-analysis
+	-Wshadow
 )
 
 option(EXTRA_WARNINGS "Enable extra warnings" OFF)
 if(EXTRA_WARNINGS)
-	add_compiler_flag(-Wshadow)
 	add_cxx_compiler_flag(-Wsuggest-override)
 else()
 	add_compiler_flag(-Wno-unused-parameter)
 endif()
+
+# Create a target for OpenSSL
+include(BrewHelper)
+find_brew_prefix(OPENSSL_ROOT_DIR openssl)
+find_package(OpenSSL REQUIRED)
 
 # libtool style configure
 add_subdirectory(config)
@@ -68,6 +76,7 @@ add_library(util
 	fs.cpp
 	logging.cpp
 	random.cpp
+	rcu.cpp
 	rpc/protocol.cpp
 	support/cleanse.cpp
 	support/lockedpool.cpp
@@ -86,8 +95,6 @@ target_include_directories(util
 		.
 		# To access the config.
 		${CMAKE_CURRENT_BINARY_DIR}
-	PRIVATE
-		${OPENSSL_INCLUDE_DIR}
 )
 
 # Target specific configs
@@ -176,6 +183,7 @@ target_link_libraries(bitcoinconsensus common)
 add_library(server
 	addrman.cpp
 	addrdb.cpp
+	avalanche.cpp
 	bloom.cpp
 	blockencodings.cpp
 	chain.cpp
@@ -204,6 +212,7 @@ add_library(server
 	rpc/misc.cpp
 	rpc/net.cpp
 	rpc/rawtransaction.cpp
+	rpc/safemode.cpp
 	rpc/server.cpp
 	script/scriptcache.cpp
 	script/sigcache.cpp
@@ -232,6 +241,9 @@ target_link_libraries(server
 
 # Test suite.
 add_subdirectory(test)
+
+# Benchmark suite.
+add_subdirectory(bench)
 
 # Wallet
 if(BUILD_BITCOIN_WALLET)

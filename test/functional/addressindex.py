@@ -19,7 +19,7 @@ from test_framework.key import CECKey
 class AddressIndexTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
-        self.setup_clean_chain = True    
+        self.setup_clean_chain = True
         self.extra_args = [["-debug", "-relaypriority=0"],["-debug", "-addressindex"],["-debug", "-addressindex", "-relaypriority=0"], ["-debug", "-addressindex"]]
 
     def setup_network(self):
@@ -27,15 +27,15 @@ class AddressIndexTest(BitcoinTestFramework):
 
         # Nodes 0/1 are "wallet" nodes
         # Nodes 2/3 are used for testing
-        connect_nodes(self.nodes[0], 1)
-        connect_nodes(self.nodes[0], 2)
-        connect_nodes(self.nodes[0], 3)
+        connect_nodes(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[0], self.nodes[2])
+        connect_nodes(self.nodes[0], self.nodes[3])
 
         self.is_network_split = False
         self.sync_all()
 
     def run_test(self):
-        print("Mining blocks...")
+        self.log.info("Mining blocks...")
         self.nodes[0].generate(105)
         self.sync_all()
 
@@ -49,7 +49,7 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(balance0["balance"], 0)
 
         # Check p2pkh and p2sh address indexes
-        print("Testing p2pkh and p2sh address index...")
+        self.log.info("Testing p2pkh and p2sh address index...")
 
         txid0 = self.nodes[0].sendtoaddress("mo9ncXisMeAoXwqcV5EWuyncbmCcQN4rVs", 10)
         self.nodes[0].generate(1)
@@ -84,7 +84,7 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(txidsb[2], txidb2)
 
         # Check that limiting by height works
-        print("Testing querying txids by range of block heights..")
+        self.log.info("Testing querying txids by range of block heights..")
         height_txids = self.nodes[1].getaddresstxids({
             "addresses": ["2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br"],
             "start": 105,
@@ -109,7 +109,7 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(balance0["balance"], 45 * 100000000)
 
         # Check that outputs with the same address will only return one txid
-        print("Testing for txid uniqueness...")
+        self.log.info("Testing for txid uniqueness...")
         addressHash = bytes([99,73,164,24,252,69,120,209,10,55,43,84,180,92,40,12,200,196,56,47])
         scriptPubKey = CScript([OP_HASH160, addressHash, OP_EQUAL])
         unspent = self.nodes[0].listunspent()
@@ -129,12 +129,12 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(txidsmany[3], sent_txid)
 
         # Check that balances are correct
-        print("Testing balances...")
+        self.log.info("Testing balances...")
         balance0 = self.nodes[1].getaddressbalance("2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br")
         assert_equal(balance0["balance"], 45 * 100000000 + 21)
 
         # Check that balances are correct after spending
-        print("Testing balances after spending...")
+        self.log.info("Testing balances after spending...")
         privkey2 = "cSdkPxkAjA4HDr5VHgsebAPDEh9Gyub4HK8UJr2DFGGqKKy4K5sG"
         address2 = "mgY65WSfEmsyYaYPQaXhmXMeBhwp4EcsQW"
         addressHash2 = bytes([11,47,10,12,49,191,224,64,107,12,204,19,129,253,190,49,25,70,218,220])
@@ -187,13 +187,13 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(len(deltas), 1)
 
         # Check that unspent outputs can be queried
-        print("Testing utxos...")
+        self.log.info("Testing utxos...")
         utxos = self.nodes[1].getaddressutxos({"addresses": [address2]})
         assert_equal(len(utxos), 1)
         assert_equal(utxos[0]["satoshis"], change_amount)
 
         # Check that indexes will be updated with a reorg
-        print("Testing reorg...")
+        self.log.info("Testing reorg...")
 
         best_hash = self.nodes[0].getbestblockhash()
         self.nodes[0].invalidateblock(best_hash)
@@ -225,7 +225,7 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(utxos3[2]["height"], 265)
 
         # Check mempool indexing
-        print("Testing mempool indexing...")
+        self.log.info("Testing mempool indexing...")
 
         privKey3 = "cVfUn53hAbRrDEuMexyfgDpZPhF7KqXpS8UZevsyTDaugB7HZ3CD"
         address3 = "mw4ynwhS7MmrQ27hr82kgqu7zryNDK26JB"
@@ -321,7 +321,7 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(len(mempool_deltas), 2)
 
         # Include chaininfo in results
-        print("Testing results with chain info...")
+        self.log.info("Testing results with chain info...")
 
         deltas_with_info = self.nodes[1].getaddressdeltas({
             "addresses": [address2],
@@ -341,7 +341,7 @@ class AddressIndexTest(BitcoinTestFramework):
         assert_equal(utxos_with_info["height"], 267)
         assert_equal(utxos_with_info["hash"], expected_tip_block_hash)
 
-        print("Passed\n")
+        self.log.info("Passed\n")
 
 
 if __name__ == '__main__':

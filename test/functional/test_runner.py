@@ -21,7 +21,6 @@ import datetime
 import os
 import time
 import shutil
-import signal
 import sys
 import subprocess
 import tempfile
@@ -74,14 +73,16 @@ TEST_PARAMS = {
     #    testName
     #    testName --param1 --param2
     #    testname --param3
-    "txn_doublespend.py": [["--mineblock"]],
-    "txn_clone.py": [["--mineblock"]]
+    "wallet_txn_doublespend.py": [["--mineblock"]],
+    "wallet_txn_clone.py": [["--mineblock"]],
+    "wallet_multiwallet.py": [["--usecli"]],
 }
 
 # Used to limit the number of tests, when list of tests is not provided on command line
 # When --extended is specified, we run all tests, otherwise
 # we only run a test if its execution time in seconds does not exceed EXTENDED_CUTOFF
-EXTENDED_CUTOFF = 40
+DEFAULT_EXTENDED_CUTOFF = 40
+DEFAULT_JOBS = (multiprocessing.cpu_count() // 3) + 1
 
 
 class TestCase():
@@ -155,11 +156,13 @@ def main():
         '--exclude', '-x', help='specify a comma-seperated-list of scripts to exclude. Do not include the .py extension in the name.')
     parser.add_argument('--extended', action='store_true',
                         help='run the extended test suite in addition to the basic tests')
+    parser.add_argument('--cutoff', type=int, default=DEFAULT_EXTENDED_CUTOFF,
+                        help='set the cutoff runtime for what tests get run')
     parser.add_argument('--force', '-f', action='store_true',
                         help='run tests even on platforms where they are disabled by default (e.g. windows).')
     parser.add_argument('--help', '-h', '-?',
                         action='store_true', help='print help text and exit')
-    parser.add_argument('--jobs', '-j', type=int, default=(multiprocessing.cpu_count() // 3) + 1,
+    parser.add_argument('--jobs', '-j', type=int, default=DEFAULT_JOBS,
                         help='how many test scripts to run in parallel. Default=4.')
     parser.add_argument('--keepcache', '-k', action='store_true',
                         help='the default behavior is to flush the cache directory on startup. --keepcache retains the cache from the previous testrun.')
@@ -209,6 +212,13 @@ def main():
     # Build list of tests
     all_scripts = get_all_scripts_from_disk(tests_dir, NON_SCRIPTS)
 
+    # Check all tests with parameters actually exist
+    for test in TEST_PARAMS:
+        if not test in all_scripts:
+            print("ERROR: Test with parameter {} does not exist, check it has "
+                  "not been renamed or deleted".format(test))
+            sys.exit(1)
+
     if tests:
         # Individual tests have been specified. Run specified tests that exist
         # in the all_scripts list. Accept the name with or without .py
@@ -219,9 +229,8 @@ def main():
     else:
         # No individual tests have been specified.
         # Run all tests that do not exceed
-        # EXTENDED_CUTOFF, unless --extended was specified
         test_list = all_scripts
-        cutoff = EXTENDED_CUTOFF
+        cutoff = args.cutoff
         if args.extended:
             cutoff = sys.maxsize
 
@@ -301,8 +310,12 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, num_j
 
     if len(test_list) > 1 and num_jobs > 1:
         # Populate cache
-        subprocess.check_output(
-            [os.path.join(tests_dir, 'create_cache.py')] + flags + [os.path.join("--tmpdir=%s", "cache") % tmpdir])
+        try:
+            subprocess.check_output(
+                [os.path.join(tests_dir, 'create_cache.py')] + flags + [os.path.join("--tmpdir=%s", "cache") % tmpdir])
+        except Exception as e:
+            print(e.output)
+            raise e
 
     # Run Tests
     time0 = time.time()
@@ -328,7 +341,7 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, num_j
         os.rmdir(tmpdir)
 
     all_passed = all(
-        map(lambda test_result: test_result.status == "Passed", test_results))
+        map(lambda test_result: test_result.was_successful, test_results))
 
     sys.exit(not all_passed)
 
@@ -467,7 +480,7 @@ def print_results(test_results, max_len_name, runtime):
     time_sum = 0
 
     for test_result in test_results:
-        all_passed = all_passed and test_result.status != "Failed"
+        all_passed = all_passed and test_result.was_successful
         time_sum += test_result.time
         test_result.padding = max_len_name
         results += str(test_result)
@@ -504,6 +517,10 @@ class TestResult():
             glyph = CIRCLE
 
         return color[1] + "%s | %s%s | %s s\n" % (self.name.ljust(self.padding), glyph, self.status.ljust(7), self.time) + color[0]
+
+    @property
+    def was_successful(self):
+        return self.status != "Failed"
 
 
 def get_all_scripts_from_disk(test_dir, non_scripts):

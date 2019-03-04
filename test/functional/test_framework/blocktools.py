@@ -8,6 +8,7 @@ from .mininode import *
 from .script import CScript, OP_TRUE, OP_CHECKSIG, OP_RETURN, OP_PUSHDATA2, OP_DUP, OP_HASH160, OP_EQUALVERIFY
 from .mininode import CTransaction, CTxOut, CTxIn
 from .util import satoshi_round
+from .txtools import pad_tx
 
 # Create a block (with regtest difficulty)
 
@@ -25,6 +26,14 @@ def create_block(hashprev, coinbase, nTime=None):
     block.hashMerkleRoot = block.calc_merkle_root()
     block.calc_sha256()
     return block
+
+
+def make_conform_to_ctor(block):
+    for tx in block.vtx:
+        pad_tx(tx)
+        tx.rehash()
+    block.vtx = [block.vtx[0]] + \
+        sorted(block.vtx[1:], key=lambda tx: tx.get_id())
 
 
 def serialize_script_num(value):
@@ -62,9 +71,7 @@ def create_coinbase(height, pubkey=None):
     coinbase.vout = [coinbaseoutput]
 
     # Make sure the coinbase is at least 100 bytes
-    coinbase_size = len(coinbase.serialize())
-    if coinbase_size < 100:
-        coinbase.vin[0].scriptSig += b'x' * (100 - coinbase_size)
+    pad_tx(coinbase)
 
     coinbase.calc_sha256()
     return coinbase
@@ -78,6 +85,7 @@ def create_transaction(prevtx, n, sig, value, scriptPubKey=CScript()):
     assert(n < len(prevtx.vout))
     tx.vin.append(CTxIn(COutPoint(prevtx.sha256, n), sig, 0xffffffff))
     tx.vout.append(CTxOut(value, scriptPubKey))
+    pad_tx(tx)
     tx.calc_sha256()
     return tx
 
