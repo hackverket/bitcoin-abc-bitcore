@@ -773,7 +773,7 @@ public:
     TxMempoolInfo info(const uint256 &hash) const;
     std::vector<TxMempoolInfo> infoAll() const;
 
-    CFeeRate estimateFee(int nBlocks) const;
+    CFeeRate estimateFee() const;
 
     size_t DynamicMemoryUsage() const;
 

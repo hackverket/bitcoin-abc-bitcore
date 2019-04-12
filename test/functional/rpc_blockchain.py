@@ -27,12 +27,13 @@ from test_framework.util import (
     assert_equal,
     assert_raises,
     assert_raises_rpc_error,
-    assert_is_hex_string,
     assert_is_hash_string,
+    assert_is_hex_string,
 )
 
 
 class BlockchainTest(BitcoinTestFramework):
+
     def set_test_params(self):
         self.num_nodes = 1
         self.extra_args = [['-stopatheight=207', '-prune=1']]
@@ -45,6 +46,7 @@ class BlockchainTest(BitcoinTestFramework):
         self._test_getdifficulty()
         self._test_getnetworkhashps()
         self._test_stopatheight()
+        self._test_getblock()
         assert self.nodes[0].verifychain(4, 0)
 
     def _test_getblockchaininfo(self):
@@ -61,6 +63,7 @@ class BlockchainTest(BitcoinTestFramework):
             'pruned',
             'softforks',
             'verificationprogress',
+            'warnings',
         ]
         res = self.nodes[0].getblockchaininfo()
         # result should have pruneheight and default keys if pruning is enabled
@@ -74,6 +77,31 @@ class BlockchainTest(BitcoinTestFramework):
         assert_equal(sorted(res.keys()), keys)
 
     def _test_getchaintxstats(self):
+        self.log.info("Test getchaintxstats")
+
+        # Test `getchaintxstats` invalid extra parameters
+        assert_raises_rpc_error(
+            -1, 'getchaintxstats', self.nodes[0].getchaintxstats, 0, '', 0)
+
+        # Test `getchaintxstats` invalid `nblocks`
+        assert_raises_rpc_error(
+            -1, "JSON value is not an integer as expected", self.nodes[0].getchaintxstats, '')
+        assert_raises_rpc_error(
+            -8, "Invalid block count: should be between 0 and the block's height - 1", self.nodes[0].getchaintxstats, -1)
+        assert_raises_rpc_error(-8, "Invalid block count: should be between 0 and the block's height - 1", self.nodes[
+                                0].getchaintxstats, self.nodes[0].getblockcount())
+
+        # Test `getchaintxstats` invalid `blockhash`
+        assert_raises_rpc_error(
+            -1, "JSON value is not a string as expected", self.nodes[0].getchaintxstats, blockhash=0)
+        assert_raises_rpc_error(
+            -5, "Block not found", self.nodes[0].getchaintxstats, blockhash='0')
+        blockhash = self.nodes[0].getblockhash(200)
+        self.nodes[0].invalidateblock(blockhash)
+        assert_raises_rpc_error(
+            -8, "Block is not in main chain", self.nodes[0].getchaintxstats, blockhash=blockhash)
+        self.nodes[0].reconsiderblock(blockhash)
+
         chaintxstats = self.nodes[0].getchaintxstats(1)
         # 200 txs plus genesis tx
         assert_equal(chaintxstats['txcount'], 201)
@@ -81,29 +109,30 @@ class BlockchainTest(BitcoinTestFramework):
         # we have to round because of binary math
         assert_equal(round(chaintxstats['txrate'] * 600, 10), Decimal(1))
 
-        b1 = self.nodes[0].getblock(self.nodes[0].getblockhash(1))
-        b200 = self.nodes[0].getblock(self.nodes[0].getblockhash(200))
+        b1_hash = self.nodes[0].getblockhash(1)
+        b1 = self.nodes[0].getblock(b1_hash)
+        b200_hash = self.nodes[0].getblockhash(200)
+        b200 = self.nodes[0].getblock(b200_hash)
         time_diff = b200['mediantime'] - b1['mediantime']
 
         chaintxstats = self.nodes[0].getchaintxstats()
         assert_equal(chaintxstats['time'], b200['time'])
         assert_equal(chaintxstats['txcount'], 201)
+        assert_equal(chaintxstats['window_final_block_hash'], b200_hash)
         assert_equal(chaintxstats['window_block_count'], 199)
         assert_equal(chaintxstats['window_tx_count'], 199)
         assert_equal(chaintxstats['window_interval'], time_diff)
         assert_equal(
             round(chaintxstats['txrate'] * time_diff, 10), Decimal(199))
 
-        chaintxstats = self.nodes[0].getchaintxstats(blockhash=b1['hash'])
+        chaintxstats = self.nodes[0].getchaintxstats(blockhash=b1_hash)
         assert_equal(chaintxstats['time'], b1['time'])
         assert_equal(chaintxstats['txcount'], 2)
+        assert_equal(chaintxstats['window_final_block_hash'], b1_hash)
         assert_equal(chaintxstats['window_block_count'], 0)
         assert('window_tx_count' not in chaintxstats)
         assert('window_interval' not in chaintxstats)
         assert('txrate' not in chaintxstats)
-
-        assert_raises_rpc_error(-8, "Invalid block count: should be between 0 and the block's height - 1",
-                                self.nodes[0].getchaintxstats, 201)
 
     def _test_gettxoutsetinfo(self):
         node = self.nodes[0]
@@ -200,6 +229,41 @@ class BlockchainTest(BitcoinTestFramework):
         self.nodes[0].wait_until_stopped()
         self.start_node(0)
         assert_equal(self.nodes[0].getblockcount(), 207)
+
+    def _test_getblock(self):
+        # Checks for getblock verbose outputs
+        node = self.nodes[0]
+        getblockinfo = node.getblock(node.getblockhash(1), 2)
+        gettransactioninfo = node.gettransaction(getblockinfo['tx'][0]['txid'])
+        getblockheaderinfo = node.getblockheader(node.getblockhash(1), True)
+
+        assert_equal(getblockinfo['hash'], gettransactioninfo['blockhash'])
+        assert_equal(
+            getblockinfo['confirmations'], gettransactioninfo['confirmations'])
+        assert_equal(getblockinfo['height'], getblockheaderinfo['height'])
+        assert_equal(
+            getblockinfo['versionHex'], getblockheaderinfo['versionHex'])
+        assert_equal(getblockinfo['version'], getblockheaderinfo['version'])
+        assert_equal(getblockinfo['size'], 188)
+        assert_equal(
+            getblockinfo['merkleroot'], getblockheaderinfo['merkleroot'])
+        # Verify transaction data by check the hex values
+        for tx in getblockinfo['tx']:
+            getrawtransaction = node.getrawtransaction(tx['txid'], True)
+            assert_equal(tx['hex'], getrawtransaction['hex'])
+        assert_equal(getblockinfo['time'], getblockheaderinfo['time'])
+        assert_equal(
+            getblockinfo['mediantime'], getblockheaderinfo['mediantime'])
+        assert_equal(getblockinfo['nonce'], getblockheaderinfo['nonce'])
+        assert_equal(getblockinfo['bits'], getblockheaderinfo['bits'])
+        assert_equal(
+            getblockinfo['difficulty'], getblockheaderinfo['difficulty'])
+        assert_equal(
+            getblockinfo['chainwork'], getblockheaderinfo['chainwork'])
+        assert_equal(
+            getblockinfo['previousblockhash'], getblockheaderinfo['previousblockhash'])
+        assert_equal(
+            getblockinfo['nextblockhash'], getblockheaderinfo['nextblockhash'])
 
 
 if __name__ == '__main__':

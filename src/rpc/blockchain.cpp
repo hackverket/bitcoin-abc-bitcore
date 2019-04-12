@@ -30,6 +30,7 @@
 #include "util.h"
 #include "utilstrencodings.h"
 #include "validation.h"
+#include "warnings.h"
 
 #include <boost/thread/thread.hpp> // boost::thread::interrupt
 
@@ -74,6 +75,7 @@ double GetDifficulty(const CBlockIndex *blockindex) {
 }
 
 UniValue blockheaderToJSON(const CBlockIndex *blockindex) {
+    AssertLockHeld(cs_main);
     UniValue result(UniValue::VOBJ);
     result.pushKV("hash", blockindex->GetBlockHash().GetHex());
     int confirmations = -1;
@@ -212,6 +214,7 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
 
 UniValue blockToJSON(const Config &config, const CBlock &block,
                      const CBlockIndex *blockindex, bool txDetails) {
+    AssertLockHeld(cs_main);
     UniValue result(UniValue::VOBJ);
     result.pushKV("hash", blockindex->GetBlockHash().GetHex());
     int confirmations = -1;
@@ -230,7 +233,7 @@ UniValue blockToJSON(const Config &config, const CBlock &block,
     for (const auto &tx : block.vtx) {
         if (txDetails) {
             UniValue objTx(UniValue::VOBJ);
-            TxToUniv(*tx, uint256(), objTx);
+            TxToUniv(*tx, uint256(), objTx, true, RPCSerializationFlags());
             txs.push_back(objTx);
         } else {
             txs.push_back(tx->GetId().GetHex());
@@ -337,7 +340,7 @@ UniValue waitfornewblock(const Config &config, const JSONRPCRequest &request) {
     }
 
     int timeout = 0;
-    if (request.params.size() > 0) {
+    if (!request.params[0].isNull()) {
         timeout = request.params[0].get_int();
     }
 
@@ -395,7 +398,7 @@ UniValue waitforblock(const Config &config, const JSONRPCRequest &request) {
 
     uint256 hash = uint256S(request.params[0].get_str());
 
-    if (request.params.size() > 1) {
+    if (!request.params[1].isNull()) {
         timeout = request.params[1].get_int();
     }
 
@@ -449,7 +452,7 @@ UniValue waitforblockheight(const Config &config,
 
     int height = request.params[0].get_int();
 
-    if (request.params.size() > 1) {
+    if (!request.params[1].isNull()) {
         timeout = request.params[1].get_int();
     }
 
@@ -607,7 +610,7 @@ UniValue getrawmempool(const Config &config, const JSONRPCRequest &request) {
     }
 
     bool fVerbose = false;
-    if (request.params.size() > 0) {
+    if (!request.params[0].isNull()) {
         fVerbose = request.params[0].get_bool();
     }
 
@@ -644,7 +647,7 @@ UniValue getmempoolancestors(const Config &config,
     }
 
     bool fVerbose = false;
-    if (request.params.size() > 1) {
+    if (!request.params[1].isNull()) {
         fVerbose = request.params[1].get_bool();
     }
 
@@ -714,7 +717,9 @@ UniValue getmempooldescendants(const Config &config,
     }
 
     bool fVerbose = false;
-    if (request.params.size() > 1) fVerbose = request.params[1].get_bool();
+    if (!request.params[1].isNull()) {
+        fVerbose = request.params[1].get_bool();
+    }
 
     uint256 hash = ParseHashV(request.params[0], "parameter 1");
 
@@ -963,7 +968,7 @@ UniValue getblockheader(const Config &config, const JSONRPCRequest &request) {
     uint256 hash(uint256S(strHash));
 
     bool fVerbose = true;
-    if (request.params.size() > 1) {
+    if (!request.params[1].isNull()) {
         fVerbose = request.params[1].get_bool();
     }
 
@@ -1055,7 +1060,7 @@ UniValue getblock(const Config &config, const JSONRPCRequest &request) {
     uint256 hash(uint256S(strHash));
 
     int verbosity = 1;
-    if (request.params.size() > 1) {
+    if (!request.params[1].isNull()) {
         if (request.params[1].isNum()) {
             verbosity = request.params[1].get_int();
         } else {
@@ -1328,7 +1333,7 @@ UniValue gettxout(const Config &config, const JSONRPCRequest &request) {
     int n = request.params[1].get_int();
     COutPoint out(hash, n);
     bool fMempool = true;
-    if (request.params.size() > 2) {
+    if (!request.params[2].isNull()) {
         fMempool = request.params[2].get_bool();
     }
 
@@ -1387,10 +1392,10 @@ UniValue verifychain(const Config &config, const JSONRPCRequest &request) {
 
     LOCK(cs_main);
 
-    if (request.params.size() > 0) {
+    if (!request.params[0].isNull()) {
         nCheckLevel = request.params[0].get_int();
     }
-    if (request.params.size() > 1) {
+    if (!request.params[1].isNull()) {
         nCheckDepth = request.params[1].get_int();
     }
 
@@ -1440,37 +1445,40 @@ UniValue getblockchaininfo(const Config &config,
             "blockchain processing.\n"
             "\nResult:\n"
             "{\n"
-            "  \"chain\": \"xxxx\",        (string) current network name as "
-            "defined in BIP70 (main, test, regtest)\n"
-            "  \"blocks\": xxxxxx,         (numeric) the current number of "
+            "  \"chain\": \"xxxx\",              (string) current network name "
+            "as defined in BIP70 (main, test, regtest)\n"
+            "  \"blocks\": xxxxxx,             (numeric) the current number of "
             "blocks processed in the server\n"
-            "  \"headers\": xxxxxx,        (numeric) the current number of "
+            "  \"headers\": xxxxxx,            (numeric) the current number of "
             "headers we have validated\n"
-            "  \"bestblockhash\": \"...\", (string) the hash of the currently "
-            "best block\n"
-            "  \"difficulty\": xxxxxx,     (numeric) the current difficulty\n"
-            "  \"mediantime\": xxxxxx,     (numeric) median time for the "
+            "  \"bestblockhash\": \"...\",       (string) the hash of the "
+            "currently best block\n"
+            "  \"difficulty\": xxxxxx,         (numeric) the current "
+            "difficulty\n"
+            "  \"mediantime\": xxxxxx,         (numeric) median time for the "
             "current best block\n"
             "  \"verificationprogress\": xxxx, (numeric) estimate of "
             "verification progress [0..1]\n"
-            "  \"chainwork\": \"xxxx\"     (string) total amount of work in "
-            "active chain, in hexadecimal\n"
-            "  \"pruned\": xx,             (boolean) if the blocks are subject "
-            "to pruning\n"
-            "  \"pruneheight\": xxxxxx,    (numeric) lowest-height complete "
-            "block stored\n"
-            "  \"softforks\": [            (array) status of softforks in "
+            "  \"chainwork\": \"xxxx\"           (string) total amount of work "
+            "in active chain, in hexadecimal\n"
+            "  \"pruned\": xx,                 (boolean) if the blocks are "
+            "subject to pruning\n"
+            "  \"pruneheight\": xxxxxx,        (numeric) lowest-height "
+            "complete block stored\n"
+            "  \"softforks\": [                (array) status of softforks in "
             "progress\n"
             "     {\n"
-            "        \"id\": \"xxxx\",        (string) name of softfork\n"
-            "        \"version\": xx,         (numeric) block version\n"
-            "        \"reject\": {            (object) progress toward "
+            "        \"id\": \"xxxx\",           (string) name of softfork\n"
+            "        \"version\": xx,          (numeric) block version\n"
+            "        \"reject\": {             (object) progress toward "
             "rejecting pre-softfork blocks\n"
-            "           \"status\": xx,       (boolean) true if threshold "
+            "           \"status\": xx,        (boolean) true if threshold "
             "reached\n"
             "        },\n"
             "     }, ...\n"
             "  ]\n"
+            "  \"warnings\" : \"...\",           (string) any network and "
+            "blockchain warnings.\n"
             "}\n"
             "\nExamples:\n" +
             HelpExampleCli("getblockchaininfo", "") +
@@ -1510,6 +1518,7 @@ UniValue getblockchaininfo(const Config &config,
 
         obj.pushKV("pruneheight", block->nHeight);
     }
+    obj.pushKV("warnings", GetWarnings("statusbar"));
     return obj;
 }
 
@@ -1935,20 +1944,22 @@ UniValue getchaintxstats(const Config &config, const JSONRPCRequest &request) {
             "ends the window.\n"
             "\nResult:\n"
             "{\n"
-            "  \"time\": xxxxx,                (numeric) The timestamp for the "
-            "final block in the window in UNIX format.\n"
-            "  \"txcount\": xxxxx,             (numeric) The total number of "
-            "transactions in the chain up to that point.\n"
-            "  \"window_block_count\": xxxxx,  (numeric) Size of the window in "
-            "number of blocks.\n"
-            "  \"window_tx_count\": xxxxx,     (numeric) The number of "
-            "transactions in the window. Only returned if "
+            "  \"time\": xxxxx,                         (numeric) The "
+            "timestamp for the final block in the window in UNIX format.\n"
+            "  \"txcount\": xxxxx,                      (numeric) The total "
+            "number of transactions in the chain up to that point.\n"
+            "  \"window_final_block_hash\": \"...\",      (string) The hash of "
+            "the final block in the window.\n"
+            "  \"window_block_count\": xxxxx,           (numeric) Size of "
+            "the window in number of blocks.\n"
+            "  \"window_tx_count\": xxxxx,              (numeric) The number "
+            "of transactions in the window. Only returned if "
             "\"window_block_count\" is > 0.\n"
-            "  \"window_interval\": xxxxx,     (numeric) The elapsed time in "
-            "the window in seconds. Only returned if \"window_block_count\" is "
-            "> 0.\n"
-            "  \"txrate\": x.xx,               (numeric) The average rate of "
-            "transactions per second in the window. Only returned if "
+            "  \"window_interval\": xxxxx,              (numeric) The elapsed "
+            "time in the window in seconds. Only returned if "
+            "\"window_block_count\" is > 0.\n"
+            "  \"txrate\": x.xx,                        (numeric) The average "
+            "rate of transactions per second in the window. Only returned if "
             "\"window_interval\" is > 0.\n"
             "}\n"
             "\nExamples:\n" +
@@ -1962,27 +1973,20 @@ UniValue getchaintxstats(const Config &config, const JSONRPCRequest &request) {
     int blockcount = 30 * 24 * 60 * 60 /
                      config.GetChainParams().GetConsensus().nPowTargetSpacing;
 
-    bool havehash = !request.params[1].isNull();
-    uint256 hash;
-    if (havehash) {
-        hash = uint256S(request.params[1].get_str());
-    }
-
-    {
+    if (request.params[1].isNull()) {
         LOCK(cs_main);
-        if (havehash) {
-            auto it = mapBlockIndex.find(hash);
-            if (it == mapBlockIndex.end()) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                   "Block not found");
-            }
-            pindex = it->second;
-            if (!chainActive.Contains(pindex)) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER,
-                                   "Block is not in main chain");
-            }
-        } else {
-            pindex = chainActive.Tip();
+        pindex = chainActive.Tip();
+    } else {
+        uint256 hash = uint256S(request.params[1].get_str());
+        LOCK(cs_main);
+        auto it = mapBlockIndex.find(hash);
+        if (it == mapBlockIndex.end()) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
+        }
+        pindex = it->second;
+        if (!chainActive.Contains(pindex)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               "Block is not in main chain");
         }
     }
 
@@ -2010,6 +2014,7 @@ UniValue getchaintxstats(const Config &config, const JSONRPCRequest &request) {
     UniValue ret(UniValue::VOBJ);
     ret.pushKV("time", int64_t(pindex->nTime));
     ret.pushKV("txcount", int64_t(pindex->nChainTx));
+    ret.pushKV("window_final_block_hash", pindex->GetBlockHash().GetHex());
     ret.pushKV("window_block_count", blockcount);
     if (blockcount > 0) {
         ret.pushKV("window_tx_count", nTxDiff);

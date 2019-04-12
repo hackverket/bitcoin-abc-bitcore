@@ -151,7 +151,10 @@ void ValidateCheckInputsForAllFlags(const CMutableTransaction &mutableTx,
 BOOST_FIXTURE_TEST_CASE(checkinputs_test, TestChain100Setup) {
     // Test that passing CheckInputs with one set of script flags doesn't imply
     // that we would pass again with a different set of flags.
-    InitScriptExecutionCache();
+    {
+        LOCK(cs_main);
+        InitScriptExecutionCache();
+    }
 
     CScript p2pk_scriptPubKey =
         CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
@@ -195,7 +198,6 @@ BOOST_FIXTURE_TEST_CASE(checkinputs_test, TestChain100Setup) {
     const CTransaction funding_tx = CTransaction(mutableFunding_tx);
     // Spend the funding transaction by mining it into a block
     {
-        LOCK(cs_main);
         CBlock block = CreateAndProcessBlock({funding_tx}, p2pk_scriptPubKey);
         BOOST_CHECK(chainActive.Tip()->GetBlockHash() == block.GetHash());
         BOOST_CHECK(pcoinsTip->GetBestBlock() == block.GetHash());
@@ -241,12 +243,12 @@ BOOST_FIXTURE_TEST_CASE(checkinputs_test, TestChain100Setup) {
 
     const CTransaction spend_tx(mutableSpend_tx);
 
-    LOCK(cs_main);
-
     // Test that invalidity under a set of flags doesn't preclude validity under
     // other (eg consensus) flags.
     // spend_tx is invalid according to NULLDUMMY
     {
+        LOCK(cs_main);
+
         CValidationState state;
         PrecomputedTransactionData ptd_spend_tx(spend_tx);
 
@@ -271,15 +273,17 @@ BOOST_FIXTURE_TEST_CASE(checkinputs_test, TestChain100Setup) {
         // successes.
         ValidateCheckInputsForAllFlags(spend_tx, SCRIPT_VERIFY_NULLDUMMY, false,
                                        false);
-
-        // And if we produce a block with this tx, it should be valid (LOW_S not
-        // enabled yet), even though there's no cache entry.
-        CBlock block;
-
-        block = CreateAndProcessBlock({spend_tx}, p2pk_scriptPubKey);
-        BOOST_CHECK(chainActive.Tip()->GetBlockHash() == block.GetHash());
-        BOOST_CHECK(pcoinsTip->GetBestBlock() == block.GetHash());
     }
+
+    // And if we produce a block with this tx, it should be valid (LOW_S not
+    // enabled yet), even though there's no cache entry.
+    CBlock block;
+
+    block = CreateAndProcessBlock({spend_tx}, p2pk_scriptPubKey);
+    BOOST_CHECK(chainActive.Tip()->GetBlockHash() == block.GetHash());
+    BOOST_CHECK(pcoinsTip->GetBestBlock() == block.GetHash());
+
+    LOCK(cs_main);
 
     // Test P2SH: construct a transaction that is valid without P2SH, and then
     // test validity with P2SH.

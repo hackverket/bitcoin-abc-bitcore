@@ -5,16 +5,19 @@
 
 # Exercise the listtransactions API
 
+from decimal import Decimal
+
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import *
+from test_framework.util import assert_array_result
 
 
 class ListTransactionsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
-        self.enable_mocktime()
 
     def run_test(self):
+        # Leave IBD
+        self.nodes[0].generate(1)
         # Simple send, 0 to 1:
         txid = self.nodes[0].sendtoaddress(self.nodes[1].getnewaddress(), 0.1)
         self.sync_all()

@@ -349,7 +349,7 @@ std::string HelpMessage(HelpMessageMode mode) {
     strUsage += HelpMessageOpt(
         "-conf=<file>", strprintf(_("Specify configuration file (default: %s)"),
                                   BITCOIN_CONF_FILENAME));
-    if (mode == HMM_BITCOIND) {
+    if (mode == HelpMessageMode::BITCOIND) {
 #if HAVE_DECL_DAEMON
         strUsage += HelpMessageOpt(
             "-daemon",
@@ -1505,6 +1505,11 @@ bool AppInitParameterInteraction(Config &config, RPCServer &rpcServer) {
                                         chainparams.DefaultConsistencyChecks());
     fCheckpointsEnabled =
         gArgs.GetBoolArg("-checkpoints", DEFAULT_CHECKPOINTS_ENABLED);
+    if (fCheckpointsEnabled) {
+        LogPrintf("Checkpoints will be verified.\n");
+    } else {
+        LogPrintf("Skipping checkpoint verification.\n");
+    }
 
     hashAssumeValid = uint256S(
         gArgs.GetArg("-assumevalid",

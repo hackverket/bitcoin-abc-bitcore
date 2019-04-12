@@ -649,7 +649,7 @@ void BitcoinGUI::createTrayIconMenu() {
 #else
     // Note: On Mac, the dock icon is used to provide the tray's functionality.
     MacDockIconHandler *dockIconHandler = MacDockIconHandler::instance();
-    dockIconHandler->setMainWindow((QMainWindow *)this);
+    dockIconHandler->setMainWindow(static_cast<QMainWindow *>(this));
     trayIconMenu = dockIconHandler->dockMenu();
 #endif
 
@@ -836,7 +836,7 @@ void BitcoinGUI::setNumBlocks(int count, const QDateTime &blockDate,
     // Acquire current block source
     enum BlockSource blockSource = clientModel->getBlockSource();
     switch (blockSource) {
-        case BLOCK_SOURCE_NETWORK:
+        case BlockSource::NETWORK:
             if (header) {
                 updateHeadersSyncProgressLabel();
                 return;
@@ -844,17 +844,17 @@ void BitcoinGUI::setNumBlocks(int count, const QDateTime &blockDate,
             progressBarLabel->setText(tr("Synchronizing with network..."));
             updateHeadersSyncProgressLabel();
             break;
-        case BLOCK_SOURCE_DISK:
+        case BlockSource::DISK:
             if (header) {
                 progressBarLabel->setText(tr("Indexing blocks on disk..."));
             } else {
                 progressBarLabel->setText(tr("Processing blocks on disk..."));
             }
             break;
-        case BLOCK_SOURCE_REINDEX:
+        case BlockSource::REINDEX:
             progressBarLabel->setText(tr("Reindexing blocks on disk..."));
             break;
-        case BLOCK_SOURCE_NONE:
+        case BlockSource::NONE:
             if (header) {
                 return;
             }
@@ -978,14 +978,15 @@ void BitcoinGUI::message(const QString &title, const QString &message,
             buttons = QMessageBox::Ok;
 
         showNormalIfMinimized();
-        QMessageBox mBox((QMessageBox::Icon)nMBoxIcon, strTitle, message,
-                         buttons, this);
+        QMessageBox mBox(static_cast<QMessageBox::Icon>(nMBoxIcon), strTitle,
+                         message, buttons, this);
         int r = mBox.exec();
         if (ret != nullptr) {
             *ret = r == QMessageBox::Ok;
         }
     } else
-        notificator->notify((Notificator::Class)nNotifyIcon, strTitle, message);
+        notificator->notify(static_cast<Notificator::Class>(nNotifyIcon),
+                            strTitle, message);
 }
 
 void BitcoinGUI::changeEvent(QEvent *e) {

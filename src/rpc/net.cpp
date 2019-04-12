@@ -385,7 +385,7 @@ static UniValue getaddednodeinfo(const Config &config,
 
     std::vector<AddedNodeInfo> vInfo = g_connman->GetAddedNodeInfo();
 
-    if (request.params.size() == 1) {
+    if (request.params.size() == 1 && !request.params[0].isNull()) {
         bool found = false;
         for (const AddedNodeInfo &info : vInfo) {
             if (info.strAddedNode == request.params[0].get_str()) {
@@ -563,8 +563,8 @@ static UniValue getnetworkinfo(const Config &config,
             "  }\n"
             "  ,...\n"
             "  ]\n"
-            "  \"warnings\": \"...\"                    "
-            "(string) any network warnings\n"
+            "  \"warnings\": \"...\"                    (string) any network "
+            "and blockchain warnings\n"
             "}\n"
             "\nExamples:\n" +
             HelpExampleCli("getnetworkinfo", "") +

@@ -101,9 +101,10 @@ TestingSetup::TestingSetup(const std::string &chainName)
     fs::create_directories(pathTemp);
     gArgs.ForceSetArg("-datadir", pathTemp.string());
 
-    // Note that because we don't bother running a scheduler thread here,
-    // callbacks via CValidationInterface are unreliable, but that's OK,
-    // our unit tests aren't testing multiple parts of the code at once.
+    // We have to run a scheduler thread to prevent ActivateBestChain
+    // from blocking due to queue overrun.
+    threadGroup.create_thread(
+        boost::bind(&CScheduler::serviceQueue, &scheduler));
     GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
 
     g_mempool.setSanityCheck(1.0);
@@ -183,7 +184,10 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
 
     // IncrementExtraNonce creates a valid coinbase and merkleRoot
     unsigned int extraNonce = 0;
-    IncrementExtraNonce(config, &block, chainActive.Tip(), extraNonce);
+    {
+        LOCK(cs_main);
+        IncrementExtraNonce(config, &block, chainActive.Tip(), extraNonce);
+    }
 
     while (!CheckProofOfWork(block.GetHash(), block.nBits, config)) {
         ++block.nNonce;

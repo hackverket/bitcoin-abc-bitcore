@@ -6,15 +6,21 @@
 
 # Tests the following RPCs:
 #    - createrawtransaction
-#    - signrawtransaction
+#    - signrawtransactionwithwallet
 #    - sendrawtransaction
 #    - decoderawtransaction
 #    - getrawtransaction
 """
+from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import *
 from test_framework.txtools import pad_raw_tx
+from test_framework.util import (
+    assert_equal,
+    assert_greater_than,
+    assert_raises_rpc_error,
+    connect_nodes_bi,
+)
 
 # Create one-input, one-output, no-fee transaction:
 
@@ -50,11 +56,40 @@ class RawTransactionsTest(BitcoinTestFramework):
         outputs = {self.nodes[0].getnewaddress(): 4.998}
         rawtx = self.nodes[2].createrawtransaction(inputs, outputs)
         rawtx = pad_raw_tx(rawtx)
-        rawtx = self.nodes[2].signrawtransaction(rawtx)
+        rawtx = self.nodes[2].signrawtransactionwithwallet(rawtx)
 
         # This will raise an exception since there are missing inputs
         assert_raises_rpc_error(
             -25, "Missing inputs", self.nodes[2].sendrawtransaction, rawtx['hex'])
+
+        #####################################
+        # getrawtransaction with block hash #
+        #####################################
+
+        # make a tx by sending then generate 2 blocks; block1 has the tx in it
+        tx = self.nodes[2].sendtoaddress(self.nodes[1].getnewaddress(), 1)
+        block1, block2 = self.nodes[2].generate(2)
+        self.sync_all()
+        # We should be able to get the raw transaction by providing the correct block
+        gottx = self.nodes[0].getrawtransaction(tx, True, block1)
+        assert_equal(gottx['txid'], tx)
+        assert_equal(gottx['in_active_chain'], True)
+        # We should not have the 'in_active_chain' flag when we don't provide a block
+        gottx = self.nodes[0].getrawtransaction(tx, True)
+        assert_equal(gottx['txid'], tx)
+        assert 'in_active_chain' not in gottx
+        # We should not get the tx if we provide an unrelated block
+        assert_raises_rpc_error(-5, "No such transaction found",
+                                self.nodes[0].getrawtransaction, tx, True, block2)
+        # An invalid block hash should raise the correct errors
+        assert_raises_rpc_error(-8, "parameter 3 must be hexadecimal",
+                                self.nodes[0].getrawtransaction, tx, True, True)
+        assert_raises_rpc_error(-8, "parameter 3 must be hexadecimal",
+                                self.nodes[0].getrawtransaction, tx, True, "foobar")
+        assert_raises_rpc_error(-8, "parameter 3 must be of length 64",
+                                self.nodes[0].getrawtransaction, tx, True, "abcd1234")
+        assert_raises_rpc_error(-5, "Block hash not found", self.nodes[0].getrawtransaction,
+                                tx, True, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
         #
         # RAW TX MULTISIG TESTS #
@@ -126,11 +161,12 @@ class RawTransactionsTest(BitcoinTestFramework):
         }]
         outputs = {self.nodes[0].getnewaddress(): 2.19}
         rawTx = self.nodes[2].createrawtransaction(inputs, outputs)
-        rawTxPartialSigned = self.nodes[1].signrawtransaction(rawTx, inputs)
+        rawTxPartialSigned = self.nodes[1].signrawtransactionwithwallet(
+            rawTx, inputs)
         # node1 only has one key, can't comp. sign the tx
         assert_equal(rawTxPartialSigned['complete'], False)
 
-        rawTxSigned = self.nodes[2].signrawtransaction(rawTx, inputs)
+        rawTxSigned = self.nodes[2].signrawtransactionwithwallet(rawTx, inputs)
         # node2 can sign the tx compl., own two of three keys
         assert_equal(rawTxSigned['complete'], True)
         self.nodes[2].sendrawtransaction(rawTxSigned['hex'])
@@ -180,12 +216,14 @@ class RawTransactionsTest(BitcoinTestFramework):
                    ['hex'], "redeemScript": mSigObjValid['hex'], "amount": vout['value']}]
         outputs = {self.nodes[0].getnewaddress(): 2.19}
         rawTx2 = self.nodes[2].createrawtransaction(inputs, outputs)
-        rawTxPartialSigned1 = self.nodes[1].signrawtransaction(rawTx2, inputs)
+        rawTxPartialSigned1 = self.nodes[1].signrawtransactionwithwallet(
+            rawTx2, inputs)
         self.log.info(rawTxPartialSigned1)
         # node1 only has one key, can't comp. sign the tx
         assert_equal(rawTxPartialSigned['complete'], False)
 
-        rawTxPartialSigned2 = self.nodes[2].signrawtransaction(rawTx2, inputs)
+        rawTxPartialSigned2 = self.nodes[2].signrawtransactionwithwallet(
+            rawTx2, inputs)
         self.log.info(rawTxPartialSigned2)
         # node2 only has one key, can't comp. sign the tx
         assert_equal(rawTxPartialSigned2['complete'], False)
@@ -226,15 +264,15 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # 6. invalid parameters - supply txid and string "Flase"
         assert_raises_rpc_error(
-            -3, "Invalid type", self.nodes[0].getrawtransaction, txHash, "False")
+            -1, "not a boolean", self.nodes[0].getrawtransaction, txHash, "False")
 
         # 7. invalid parameters - supply txid and empty array
         assert_raises_rpc_error(
-            -3, "Invalid type", self.nodes[0].getrawtransaction, txHash, [])
+            -1, "not a boolean", self.nodes[0].getrawtransaction, txHash, [])
 
         # 8. invalid parameters - supply txid and empty dict
         assert_raises_rpc_error(
-            -3, "Invalid type", self.nodes[0].getrawtransaction, txHash, {})
+            -1, "not a boolean", self.nodes[0].getrawtransaction, txHash, {})
 
         # Sanity checks on verbose getrawtransaction output
         rawTxOutput = self.nodes[0].getrawtransaction(txHash, True)

@@ -173,6 +173,7 @@ BITCOIN_CORE_H = \
   rpc/mining.h \
   rpc/misc.h \
   rpc/protocol.h \
+  rpc/rawtransaction.h \
   rpc/safemode.h \
   rpc/server.h \
   rpc/tojson.h \
@@ -259,6 +260,7 @@ libbitcoin_server_a_SOURCES = \
   rest.cpp \
   rpc/abc.cpp \
   rpc/blockchain.cpp \
+  rpc/command.cpp \
   rpc/jsonrpcrequest.cpp \
   rpc/mining.cpp \
   rpc/misc.cpp \
@@ -465,7 +467,6 @@ libbitcoin_seeder_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_seeder_a_SOURCES = \
   seeder/bitcoin.cpp \
   seeder/bitcoin.h \
-  seeder/compat.h \
   seeder/db.cpp \
   seeder/db.h \
   seeder/dns.cpp \

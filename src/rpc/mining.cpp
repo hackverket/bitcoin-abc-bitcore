@@ -108,8 +108,8 @@ static UniValue getnetworkhashps(const Config &config,
 
     LOCK(cs_main);
     return GetNetworkHashPS(
-        request.params.size() > 0 ? request.params[0].get_int() : 120,
-        request.params.size() > 1 ? request.params[1].get_int() : -1);
+        !request.params[0].isNull() ? request.params[0].get_int() : 120,
+        !request.params[1].isNull() ? request.params[1].get_int() : -1);
 }
 
 UniValue generateBlocks(const Config &config,
@@ -203,7 +203,7 @@ static UniValue generatetoaddress(const Config &config,
 
     int nGenerate = request.params[0].get_int();
     uint64_t nMaxTries = 1000000;
-    if (request.params.size() > 2) {
+    if (!request.params[2].isNull()) {
         nMaxTries = request.params[2].get_int();
     }
 
@@ -234,12 +234,16 @@ static UniValue getmininginfo(const Config &config,
             "  \"currentblocktx\": nnn,     (numeric) The last block "
             "transaction\n"
             "  \"difficulty\": xxx.xxxxx    (numeric) The current difficulty\n"
-            "  \"errors\": \"...\"            (string) Current errors\n"
             "  \"networkhashps\": nnn,      (numeric) The network hashes per "
             "second\n"
             "  \"pooledtx\": n              (numeric) The size of the mempool\n"
             "  \"chain\": \"xxxx\",           (string) current network name as "
             "defined in BIP70 (main, test, regtest)\n"
+            "  \"warnings\": \"...\"          (string) any network and "
+            "blockchain warnings\n"
+            "  \"errors\": \"...\"            (string) DEPRECATED. Same as "
+            "warnings. Only shown when bitcoind is started with "
+            "-deprecatedrpc=getmininginfo\n"
             "}\n"
             "\nExamples:\n" +
             HelpExampleCli("getmininginfo", "") +
@@ -256,10 +260,14 @@ static UniValue getmininginfo(const Config &config,
     obj.pushKV("blockprioritypercentage",
                uint8_t(gArgs.GetArg("-blockprioritypercentage",
                                     DEFAULT_BLOCK_PRIORITY_PERCENTAGE)));
-    obj.pushKV("errors", GetWarnings("statusbar"));
     obj.pushKV("networkhashps", getnetworkhashps(config, request));
     obj.pushKV("pooledtx", uint64_t(g_mempool.size()));
     obj.pushKV("chain", config.GetChainParams().NetworkIDString());
+    if (IsDeprecatedRPCEnabled(gArgs, "getmininginfo")) {
+        obj.pushKV("errors", GetWarnings("statusbar"));
+    } else {
+        obj.pushKV("warnings", GetWarnings("statusbar"));
+    }
     return obj;
 }
 
@@ -446,7 +454,7 @@ static UniValue getblocktemplate(const Config &config,
     std::string strMode = "template";
     UniValue lpval = NullUniValue;
     std::set<std::string> setClientRules;
-    if (request.params.size() > 0) {
+    if (!request.params[0].isNull()) {
         const UniValue &oparam = request.params[0].get_obj();
         const UniValue &modeval = find_value(oparam, "mode");
         if (modeval.isStr()) {
@@ -774,41 +782,29 @@ static UniValue submitblock(const Config &config,
 
 static UniValue estimatefee(const Config &config,
                             const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() != 1) {
+    if (request.fHelp || request.params.size() > 1) {
         throw std::runtime_error(
-            "estimatefee nblocks\n"
+            "estimatefee\n"
             "\nEstimates the approximate fee per kilobyte needed for a "
-            "transaction to begin\n"
-            "confirmation within nblocks blocks.\n"
-            "\nArguments:\n"
-            "1. nblocks     (numeric, required)\n"
+            "transaction\n"
             "\nResult:\n"
             "n              (numeric) estimated fee-per-kilobyte\n"
-            "\n"
-            "A negative value is returned if not enough transactions and "
-            "blocks\n"
-            "have been observed to make an estimate.\n"
-            "-1 is always returned for nblocks == 1 as it is impossible to "
-            "calculate\n"
-            "a fee that is high enough to get reliably included in the next "
-            "block.\n"
             "\nExample:\n" +
-            HelpExampleCli("estimatefee", "6"));
+            HelpExampleCli("estimatefee", ""));
     }
 
-    RPCTypeCheck(request.params, {UniValue::VNUM});
-
-    int nBlocks = request.params[0].get_int();
-    if (nBlocks < 1) {
-        nBlocks = 1;
+    if ((request.params.size() == 1) &&
+        !IsDeprecatedRPCEnabled(gArgs, "estimatefee")) {
+        // FIXME: Remove this message in 0.20
+        throw JSONRPCError(
+            RPC_METHOD_DEPRECATED,
+            "estimatefee with the nblocks argument is no longer supported\n"
+            "Please call estimatefee with no arguments instead.\n"
+            "\nExample:\n" +
+                HelpExampleCli("estimatefee", ""));
     }
 
-    CFeeRate feeRate = g_mempool.estimateFee(nBlocks);
-    if (feeRate == CFeeRate(Amount::zero())) {
-        return -1.0;
-    }
-
-    return ValueFromAmount(feeRate.GetFeePerK());
+    return ValueFromAmount(g_mempool.estimateFee().GetFeePerK());
 }
 
 // clang-format off

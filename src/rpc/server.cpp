@@ -55,7 +55,7 @@ UniValue RPCServer::ExecuteCommand(Config &config,
         auto commandsReadView = commands.getReadView();
         auto iter = commandsReadView->find(commandName);
         if (iter != commandsReadView.end()) {
-            return iter->second.get()->Execute(request.params);
+            return iter->second.get()->Execute(request);
         }
     }
 
@@ -68,8 +68,9 @@ UniValue RPCServer::ExecuteCommand(Config &config,
 
 void RPCServer::RegisterCommand(std::unique_ptr<RPCCommand> command) {
     if (command != nullptr) {
+        const std::string &commandName = command->GetName();
         commands.getWriteView()->insert(
-            std::make_pair(command->GetName(), std::move(command)));
+            std::make_pair(commandName, std::move(command)));
     }
 }
 

@@ -38,7 +38,6 @@ extern std::vector<CWalletRef> vpwallets;
  * Settings
  */
 extern CFeeRate payTxFee;
-extern unsigned int nTxConfirmTarget;
 extern bool bSpendZeroConfChange;
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
@@ -56,8 +55,6 @@ static const Amount MIN_FINAL_CHANGE = MIN_CHANGE / 2;
 static const bool DEFAULT_SPEND_ZEROCONF_CHANGE = true;
 //! Default for -walletrejectlongchains
 static const bool DEFAULT_WALLET_REJECT_LONG_CHAINS = false;
-//! -txconfirmtarget default
-static const unsigned int DEFAULT_TX_CONFIRM_TARGET = 6;
 //! Largest (in bytes) free transaction we're willing to create
 static const unsigned int MAX_FREE_TRANSACTION_CREATE_SIZE = 1000;
 static const bool DEFAULT_WALLETBROADCAST = true;
@@ -325,8 +322,6 @@ public:
     mutable Amount nAvailableWatchCreditCached;
     mutable Amount nChangeCached;
 
-    CWalletTx() { Init(nullptr); }
-
     CWalletTx(const CWallet *pwalletIn, CTransactionRef arg)
         : CMerkleTx(std::move(arg)) {
         Init(pwalletIn);
@@ -381,7 +376,7 @@ public:
             }
         }
 
-        READWRITE(*(CMerkleTx *)this);
+        READWRITE(*static_cast<CMerkleTx *>(this));
         //!< Used to be vtxPrev
         std::vector<CMerkleTx> vUnused;
         READWRITE(vUnused);
@@ -796,6 +791,7 @@ public:
         fBroadcastTransactions = false;
         fAbortRescan = false;
         fScanningWallet = false;
+        nRelockTime = 0;
     }
 
     std::map<TxId, CWalletTx> mapWallet;
@@ -996,13 +992,11 @@ public:
      * CreateTransaction();
      */
     bool FundTransaction(CMutableTransaction &tx, Amount &nFeeRet,
-                         bool overrideEstimatedFeeRate,
-                         const CFeeRate &specificFeeRate, int &nChangePosInOut,
-                         std::string &strFailReason, bool includeWatching,
+                         int &nChangePosInOut, std::string &strFailReason,
                          bool lockUnspents,
                          const std::set<int> &setSubtractFeeFromOutputs,
-                         bool keepReserveKey = true,
-                         const CTxDestination &destChange = CNoDestination());
+                         CCoinControl coinControl, bool keepReserveKey = true);
+    bool SignTransaction(CMutableTransaction &tx);
 
     /**
      * Create a new transaction paying the recipients with a set of coins
@@ -1011,20 +1005,23 @@ public:
      * position
      */
     bool CreateTransaction(const std::vector<CRecipient> &vecSend,
-                           CWalletTx &wtxNew, CReserveKey &reservekey,
+                           CTransactionRef &tx, CReserveKey &reservekey,
                            Amount &nFeeRet, int &nChangePosInOut,
                            std::string &strFailReason,
-                           const CCoinControl *coinControl = nullptr,
-                           bool sign = true);
-    bool CommitTransaction(CWalletTx &wtxNew, CReserveKey &reservekey,
-                           CConnman *connman, CValidationState &state);
+                           const CCoinControl &coinControl, bool sign = true);
+    bool CommitTransaction(
+        CTransactionRef tx, mapValue_t mapValue,
+        std::vector<std::pair<std::string, std::string>> orderForm,
+        std::string fromAccount, CReserveKey &reservekey, CConnman *connman,
+        CValidationState &state);
 
     void ListAccountCreditDebit(const std::string &strAccount,
                                 std::list<CAccountingEntry> &entries);
     bool AddAccountingEntry(const CAccountingEntry &);
     bool AddAccountingEntry(const CAccountingEntry &, CWalletDB *pwalletdb);
     template <typename ContainerType>
-    bool DummySignTx(CMutableTransaction &txNew, const ContainerType &coins);
+    bool DummySignTx(CMutableTransaction &txNew,
+                     const ContainerType &coins) const;
 
     static CFeeRate fallbackFee;
 
@@ -1263,7 +1260,7 @@ public:
 // that each entry corresponds to each vIn, in order.
 template <typename ContainerType>
 bool CWallet::DummySignTx(CMutableTransaction &txNew,
-                          const ContainerType &coins) {
+                          const ContainerType &coins) const {
     // Fill in dummy signatures for fee calculation.
     int nIn = 0;
     for (const auto &coin : coins) {
