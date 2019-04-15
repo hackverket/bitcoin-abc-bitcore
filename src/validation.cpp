@@ -712,6 +712,13 @@ static UniValue ValidateTransaction(
 		    extraFlags |= SCRIPT_ENABLE_CHECKDATASIG;
 		}
 
+        if (IsGreatWallEnabledForCurrentBlock(config)) {
+            if (!fRequireStandard) {
+                extraFlags |= SCRIPT_ALLOW_SEGWIT_RECOVERY;
+            }
+            extraFlags |= SCRIPT_ENABLE_SCHNORR;
+        }
+
 		// Check inputs based on the set of flags we activate.
 		uint32_t scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
 		if (!config.GetChainParams().RequireStandard()) {
@@ -1863,44 +1870,54 @@ UniValue CheckInputsBetter(const CTransaction &tx, CValidationState &state,
         if (pvChecks) {
             pvChecks->push_back(std::move(check));
         } else if (!check()) {
-            const bool hasNonMandatoryFlags =
-                (flags & STANDARD_NOT_MANDATORY_VERIFY_FLAGS) != 0;
-            if (hasNonMandatoryFlags) {
+            // Compute flags without the optional standardness flags.
+            // This differs from MANDATORY_SCRIPT_VERIFY_FLAGS as it contains
+            // additional upgrade flags (see AcceptToMemoryPoolWorker variable
+            // extraFlags).
+            // Even though it is not a mandatory flag,
+            // SCRIPT_ALLOW_SEGWIT_RECOVERY is strictly more permissive than the
+            // set of standard flags. It therefore needs to be added in order to
+            // check if we need to penalize the peer that sent us the
+            // transaction or not.
+            uint32_t mandatoryFlags =
+                (flags & ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS) |
+                SCRIPT_ALLOW_SEGWIT_RECOVERY;
+            if (flags != mandatoryFlags) {
                 // Check whether the failure was caused by a non-mandatory
-                // script verification check, such as non-standard DER encodings
-                // or non-null dummy arguments; if so, don't trigger DoS
-                // protection to avoid splitting the network between upgraded
-                // and non-upgraded nodes.
-                //
-                // We also check activating the monolith opcodes as it is a
-                // strictly additive change and we would not like to ban some of
-                // our peer that are ahead of us and are considering the fork
-                // as activated.
-                CScriptCheck check2(scriptPubKey, amount, tx, i,
-                                    flags &
-                                        ~STANDARD_NOT_MANDATORY_VERIFY_FLAGS,
+                // script verification check. If so, don't trigger DoS
+                // protection to avoid splitting the network on the basis of
+                // relay policy disagreements.
+                CScriptCheck check2(scriptPubKey, amount, tx, i, mandatoryFlags,
                                     sigCacheStore, txdata);
                 if (check2()) {
-                    // return state.Invalid(
-                    //    false, REJECT_NONSTANDARD,
-                    //    strprintf("non-mandatory-script-verify-flag (%s)",
-                    //              ScriptErrorString(check.GetScriptError())));
                     inputResult.pushKV("error", strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
                     inputVerified = false;
                     allPassed = false;
                 }
             }
 
+            // We also, regardless, need to check whether the transaction would
+            // be valid on the other side of the upgrade, so as to avoid
+            // splitting the network between upgraded and non-upgraded nodes.
+            // Note that this will create strange error messages like
+            // "upgrade-conditional-script-failure (Non-canonical DER ...)"
+            // -- the tx was refused entry due to STRICTENC, a mandatory flag,
+            // but after the upgrade the signature would have been interpreted
+            // as valid Schnorr and thus STRICTENC would not happen.
+            CScriptCheck check3(scriptPubKey, amount, tx, i,
+                                mandatoryFlags ^ SCRIPT_ENABLE_SCHNORR,
+                                sigCacheStore, txdata);
+            if (check3()) {
+                    inputResult.pushKV("error", strprintf("upgrade-conditional-script-failure (%s)", ScriptErrorString(check.GetScriptError())));
+                    inputVerified = false;
+                    allPassed = false;
+            }
             // Failures of other flags indicate a transaction that is invalid in
             // new blocks, e.g. a invalid P2SH. We DoS ban such nodes as they
             // are not following the protocol. That said during an upgrade
             // careful thought should be taken as to the correct behavior - we
             // may want to continue peering with non-upgraded nodes even after
             // soft-fork super-majority signaling has occurred.
-            // return state.DoS(
-            //    100, false, REJECT_INVALID,
-            //    strprintf("mandatory-script-verify-flag-failed (%s)",
-            //              ScriptErrorString(check.GetScriptError())));
             inputVerified = false;
             allPassed = false;
             inputResult.pushKV("error", strprintf("non-mandatory-script-verify-flag (%s)", ScriptErrorString(check.GetScriptError())));
