@@ -34,6 +34,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <univalue.h>
 
 class CBlockIndex;
 class CBlockTreeDB;
@@ -461,6 +462,13 @@ bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
                         CValidationState &state, const CTransactionRef &tx,
                         bool fLimitFree, bool *pfMissingInputs,
                         bool fOverrideMempoolLimit = false,
+                        const Amount nAbsurdFee = Amount::zero(),
+                        bool dryrun = false);
+
+UniValue VerifyTransactionWithMemoryPool(const Config &config, CTxMemPool &pool,
+                        CValidationState &state, const CTransactionRef &tx,
+                        bool fLimitFree, bool *pfMissingInputs,
+                        bool fOverrideMempoolLimit = false,
                         const Amount nAbsurdFee = Amount::zero());
 
 /** Convert CValidationState to a human-readable message for logging */
@@ -479,6 +487,13 @@ std::string FormatStateMessage(const CValidationState &state);
  * where we will likely never need the cache entry again.
  */
 bool CheckInputs(const CTransaction &tx, CValidationState &state,
+                 const CCoinsViewCache &view, bool fScriptChecks,
+                 const uint32_t flags, bool sigCacheStore,
+                 bool scriptCacheStore,
+                 const PrecomputedTransactionData &txdata,
+                 std::vector<CScriptCheck> *pvChecks = nullptr);
+
+UniValue CheckInputsBetter(const CTransaction &tx, CValidationState &state,
                  const CCoinsViewCache &view, bool fScriptChecks,
                  const uint32_t flags, bool sigCacheStore,
                  bool scriptCacheStore,

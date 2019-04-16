@@ -130,6 +130,7 @@ public:
     }
 
     std::string ToString() const;
+    int64_t ToInt64() const;
 
     // serialization support
     ADD_SERIALIZE_METHODS;

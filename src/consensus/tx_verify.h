@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <univalue.h>
 
 class CBlockIndex;
 class CCoinsViewCache;
@@ -29,6 +30,9 @@ namespace Consensus {
  * sigs. Preconditions: tx.IsCoinBase() is false.
  */
 bool CheckTxInputs(const CTransaction &tx, CValidationState &state,
+                   const CCoinsViewCache &inputs, int nSpendHeight);
+
+UniValue CheckTxInputsBetter(const CTransaction &tx, CValidationState &state,
                    const CCoinsViewCache &inputs, int nSpendHeight);
 
 } // namespace Consensus

@@ -13,6 +13,7 @@
 #include "script/script_flags.h"
 #include "utilmoneystr.h" // For FormatMoney
 #include "version.h"      // For PROTOCOL_VERSION
+#include <univalue.h>
 
 static bool IsFinalTx(const CTransaction &tx, int nBlockHeight,
                       int64_t nBlockTime) {
@@ -314,6 +315,60 @@ bool CheckTxInputs(const CTransaction &tx, CValidationState &state,
             100, false, REJECT_INVALID, "bad-txns-in-belowout", false,
             strprintf("value in (%s) < value out (%s)", FormatMoney(nValueIn),
                       FormatMoney(tx.GetValueOut())));
+    }
+
+    // Tally transaction fees
+    Amount nTxFee = nValueIn - tx.GetValueOut();
+    if (nTxFee < Amount::zero()) {
+        return state.DoS(100, false, REJECT_INVALID, "bad-txns-fee-negative");
+    }
+
+    nFees += nTxFee;
+    if (!MoneyRange(nFees)) {
+        return state.DoS(100, false, REJECT_INVALID, "bad-txns-fee-outofrange");
+    }
+
+    return true;
+}
+UniValue CheckTxInputsBetter(const CTransaction &tx, CValidationState &state,
+                   const CCoinsViewCache &inputs, int nSpendHeight) {
+    // This doesn't trigger the DoS code on purpose; if it did, it would make it
+    // easier for an attacker to attempt to split the network.
+    if (!inputs.HaveInputs(tx)) {
+        return state.Invalid(false, 0, "", "Inputs unavailable");
+    }
+
+    Amount nValueIn = Amount::zero();
+    Amount nFees = Amount::zero();
+    for (const auto &in : tx.vin) {
+        const COutPoint &prevout = in.prevout;
+        const Coin &coin = inputs.AccessCoin(prevout);
+        assert(!coin.IsSpent());
+
+        // If prev is coinbase, check that it's matured
+        if (coin.IsCoinBase()) {
+            if (nSpendHeight - coin.GetHeight() < COINBASE_MATURITY) {
+                return state.Invalid(
+                    false, REJECT_INVALID,
+                    "bad-txns-premature-spend-of-coinbase",
+                    strprintf("tried to spend coinbase at depth %d",
+                              nSpendHeight - coin.GetHeight()));
+            }
+        }
+
+        // Check for negative or overflow input values
+        nValueIn += coin.GetTxOut().nValue;
+        if (!MoneyRange(coin.GetTxOut().nValue) || !MoneyRange(nValueIn)) {
+            return state.DoS(100, false, REJECT_INVALID,
+                             "bad-txns-inputvalues-outofrange");
+        }
+    }
+
+    if (nValueIn < tx.GetValueOut()) {
+        return state.DoS(100, false, REJECT_INVALID, "bad-txns-in-belowout",
+                         false, strprintf("value in (%s) < value out (%s)",
+                                          FormatMoney(nValueIn),
+                                          FormatMoney(tx.GetValueOut())));
     }
 
     // Tally transaction fees
