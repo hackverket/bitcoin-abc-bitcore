@@ -4,16 +4,15 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "chainparams.h"
-#include "consensus/merkle.h"
+#include <chainparams.h>
 
-#include "tinyformat.h"
-#include "util.h"
-#include "utilstrencodings.h"
+#include <chainparamsseeds.h>
+#include <consensus/merkle.h>
+#include <tinyformat.h>
+#include <util.h>
+#include <utilstrencodings.h>
 
 #include <cassert>
-
-#include "chainparamsseeds.h"
 
 static CBlock CreateGenesisBlock(const char *pszTimestamp,
                                  const CScript &genesisOutputScript,
@@ -115,12 +114,12 @@ public:
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S(
-            "000000000000000000000000000000000000000000e413581befbedfd7a660ce");
+            "000000000000000000000000000000000000000000eafdfa9271c11ceae5513a");
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
         consensus.defaultAssumeValid = uint256S(
-            "000000000000000002f14548e86cd33b9bf9bfba049b5123e5bae431a61c6476");
+            "000000000000000001b4b8e36aec7d4f9671a47872cb9a74dc16ca398c7dcc18");
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 478558;
@@ -165,7 +164,7 @@ public:
 
         // Note that of those which support the service bits prefix, most only
         // support a subset of possible options. This is fine at runtime as
-        // we'll fall back to using them as a oneshot if they dont support the
+        // we'll fall back to using them as a oneshot if they don't support the
         // service bits we want, but we should get them updated to support all
         // service bits wanted by any release ASAP to avoid it where possible.
         // Bitcoin ABC seeder
@@ -235,6 +234,9 @@ public:
                 // Magnetic anomaly activation.
                 {556767, uint256S("0000000000000000004626ff6e3b936941d341c5932e"
                                   "ce4357eeccac44e6d56c")},
+                // Great wall activation.
+                {582680, uint256S("000000000000000001b4b8e36aec7d4f9671a47872cb"
+                                  "9a74dc16ca398c7dcc18")},
             }};
 
         // Data as of block

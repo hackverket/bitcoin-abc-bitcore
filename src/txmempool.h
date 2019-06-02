@@ -6,27 +6,20 @@
 #ifndef BITCOIN_TXMEMPOOL_H
 #define BITCOIN_TXMEMPOOL_H
 
-#include <map>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include "addressindex.h"
-#include "spentindex.h"
-#include "amount.h"
-#include "coins.h"
-#include "indirectmap.h"
-#include "primitives/transaction.h"
-#include "random.h"
-#include "sync.h"
+#include <amount.h>
+#include <coins.h>
+#include <crypto/siphash.h>
+#include <indirectmap.h>
+#include <primitives/transaction.h>
+#include <random.h>
+#include <sync.h>
+#include <addressindex.h>
+#include <spentindex.h>
 
 #include <boost/multi_index/hashed_index.hpp>
 #include <boost/multi_index/ordered_index.hpp>
 #include <boost/multi_index/sequenced_index.hpp>
 #include <boost/multi_index_container.hpp>
-
 #include <boost/signals2/signal.hpp>
 
 #include <map>
@@ -511,7 +504,7 @@ private:
     //!< minimum fee to get into the pool, decreases exponentially
     mutable double rollingMinimumFeeRate;
 
-    void trackPackageRemoved(const CFeeRate &rate);
+    void trackPackageRemoved(const CFeeRate &rate) EXCLUSIVE_LOCKS_REQUIRED(cs);
 
 public:
     // public only for testing
@@ -588,7 +581,7 @@ private:
     void UpdateChild(txiter entry, txiter child, bool add);
 
     std::vector<indexed_transaction_set::const_iterator>
-    GetSortedDepthAndScore() const;
+    GetSortedDepthAndScore() const EXCLUSIVE_LOCKS_REQUIRED(cs);
 
 public:
     indirectmap<COutPoint, const CTransaction *> mapNextTx;
@@ -617,10 +610,9 @@ public:
     // Note that addUnchecked is ONLY called from ATMP outside of tests
     // and any other callers may break wallet's in-mempool tracking (due to
     // lack of CValidationInterface::TransactionAddedToMempool callbacks).
+    bool addUnchecked(const uint256 &hash, const CTxMemPoolEntry &entry);
     bool addUnchecked(const uint256 &hash, const CTxMemPoolEntry &entry,
-                      bool validFeeEstimate = true);
-    bool addUnchecked(const uint256 &hash, const CTxMemPoolEntry &entry,
-                      setEntries &setAncestors, bool validFeeEstimate = true);
+                      setEntries &setAncestors);
 
     void addAddressIndex(const CTxMemPoolEntry &entry, const CCoinsViewCache &view);
     bool getAddressIndex(std::vector<std::pair<uint160, int> > &addresses,
@@ -656,8 +648,8 @@ public:
     bool HasNoInputsOf(const CTransaction &tx) const;
 
     /** Affect CreateNewBlock prioritisation of transactions */
-    void PrioritiseTransaction(const uint256 hash, const std::string strHash,
-                               double dPriorityDelta, const Amount nFeeDelta);
+    void PrioritiseTransaction(const uint256 &hash, double dPriorityDelta,
+                               const Amount nFeeDelta);
     void ApplyDeltas(const uint256 hash, double &dPriorityDelta,
                      Amount &nFeeDelta) const;
     void ClearPrioritisation(const uint256 hash);
@@ -672,7 +664,8 @@ public:
      */
     void
     RemoveStaged(setEntries &stage, bool updateDescendants,
-                 MemPoolRemovalReason reason = MemPoolRemovalReason::UNKNOWN);
+                 MemPoolRemovalReason reason = MemPoolRemovalReason::UNKNOWN)
+        EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /**
      * When adding transactions from a disconnected block back to the mempool,

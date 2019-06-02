@@ -3,36 +3,37 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "net_processing.h"
+#include <net_processing.h>
 
-#include "addrman.h"
-#include "arith_uint256.h"
-#include "blockencodings.h"
-#include "blockvalidity.h"
-#include "chainparams.h"
-#include "config.h"
-#include "consensus/validation.h"
-#include "hash.h"
-#include "init.h"
-#include "merkleblock.h"
-#include "net.h"
-#include "netbase.h"
-#include "netmessagemaker.h"
-#include "policy/fees.h"
-#include "policy/policy.h"
-#include "primitives/block.h"
-#include "primitives/transaction.h"
-#include "random.h"
-#include "reverse_iterator.h"
-#include "scheduler.h"
-#include "tinyformat.h"
-#include "txmempool.h"
-#include "ui_interface.h"
-#include "util.h"
-#include "utilmoneystr.h"
-#include "utilstrencodings.h"
-#include "validation.h"
-#include "validationinterface.h"
+#include <addrman.h>
+#include <arith_uint256.h>
+#include <blockencodings.h>
+#include <blockvalidity.h>
+#include <chain.h>
+#include <chainparams.h>
+#include <config.h>
+#include <consensus/validation.h>
+#include <hash.h>
+#include <init.h>
+#include <merkleblock.h>
+#include <net.h>
+#include <netbase.h>
+#include <netmessagemaker.h>
+#include <policy/fees.h>
+#include <policy/policy.h>
+#include <primitives/block.h>
+#include <primitives/transaction.h>
+#include <random.h>
+#include <reverse_iterator.h>
+#include <scheduler.h>
+#include <tinyformat.h>
+#include <txmempool.h>
+#include <ui_interface.h>
+#include <util.h>
+#include <utilmoneystr.h>
+#include <utilstrencodings.h>
+#include <validation.h>
+#include <validationinterface.h>
 
 #if defined(NDEBUG)
 #error "Bitcoin cannot be compiled without assertions."
@@ -353,6 +354,7 @@ static bool MarkBlockAsReceived(const uint256 &hash)
         itInFlight = mapBlocksInFlight.find(hash);
     if (itInFlight != mapBlocksInFlight.end()) {
         CNodeState *state = State(itInFlight->second.first);
+        assert(state != nullptr);
         state->nBlocksInFlightValidHeaders -=
             itInFlight->second.second->fValidatedHeaders;
         if (state->nBlocksInFlightValidHeaders == 0 &&
@@ -438,13 +440,12 @@ static void ProcessBlockAvailability(NodeId nodeid)
     assert(state != nullptr);
 
     if (!state->hashLastUnknownBlock.IsNull()) {
-        BlockMap::iterator itOld =
-            mapBlockIndex.find(state->hashLastUnknownBlock);
-        if (itOld != mapBlockIndex.end() && itOld->second->nChainWork > 0) {
+        const CBlockIndex *pindex =
+            LookupBlockIndex(state->hashLastUnknownBlock);
+        if (pindex && pindex->nChainWork > 0) {
             if (state->pindexBestKnownBlock == nullptr ||
-                itOld->second->nChainWork >=
-                    state->pindexBestKnownBlock->nChainWork) {
-                state->pindexBestKnownBlock = itOld->second;
+                pindex->nChainWork >= state->pindexBestKnownBlock->nChainWork) {
+                state->pindexBestKnownBlock = pindex;
             }
             state->hashLastUnknownBlock.SetNull();
         }
@@ -459,12 +460,12 @@ static void UpdateBlockAvailability(NodeId nodeid, const uint256 &hash)
 
     ProcessBlockAvailability(nodeid);
 
-    BlockMap::iterator it = mapBlockIndex.find(hash);
-    if (it != mapBlockIndex.end() && it->second->nChainWork > 0) {
+    const CBlockIndex *pindex = LookupBlockIndex(hash);
+    if (pindex && pindex->nChainWork > 0) {
         // An actually better block was announced.
         if (state->pindexBestKnownBlock == nullptr ||
-            it->second->nChainWork >= state->pindexBestKnownBlock->nChainWork) {
-            state->pindexBestKnownBlock = it->second;
+            pindex->nChainWork >= state->pindexBestKnownBlock->nChainWork) {
+            state->pindexBestKnownBlock = pindex;
         }
     } else {
         // An unknown block was announced; just assume that the latest one is
@@ -1190,7 +1191,7 @@ static bool AlreadyHave(const CInv &inv) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
                    pcoinsTip->HaveCoinInCache(COutPoint(inv.hash, 1));
         }
         case MSG_BLOCK:
-            return mapBlockIndex.count(inv.hash);
+            return LookupBlockIndex(inv.hash) != nullptr;
     }
     // Don't know what it is, just say we already got one
     return true;
@@ -1262,11 +1263,10 @@ void static ProcessGetBlockData(const Config &config, CNode *pfrom,
     bool need_activate_chain = false;
     {
         LOCK(cs_main);
-        BlockMap::iterator mi = mapBlockIndex.find(inv.hash);
-        if (mi != mapBlockIndex.end()) {
-            if (mi->second->nChainTx &&
-                !mi->second->IsValid(BlockValidity::SCRIPTS) &&
-                mi->second->IsValid(BlockValidity::TREE)) {
+        const CBlockIndex *pindex = LookupBlockIndex(inv.hash);
+        if (pindex) {
+            if (pindex->nChainTx && !pindex->IsValid(BlockValidity::SCRIPTS) &&
+                pindex->IsValid(BlockValidity::TREE)) {
                 // If we have the block and all of its parents, but have not yet
                 // validated it, we might be in the middle of connecting it (ie
                 // in the unlock of cs_main before ActivateBestChain but after
@@ -1282,9 +1282,9 @@ void static ProcessGetBlockData(const Config &config, CNode *pfrom,
     }
 
     LOCK(cs_main);
-    BlockMap::iterator mi = mapBlockIndex.find(inv.hash);
-    if (mi != mapBlockIndex.end()) {
-        send = BlockRequestAllowed(mi->second, consensusParams);
+    const CBlockIndex *pindex = LookupBlockIndex(inv.hash);
+    if (pindex) {
+        send = BlockRequestAllowed(pindex, consensusParams);
         if (!send) {
             LogPrint(BCLog::NET,
                      "%s: ignoring request from peer=%i for old "
@@ -1298,7 +1298,7 @@ void static ProcessGetBlockData(const Config &config, CNode *pfrom,
     // Never disconnect whitelisted nodes.
     if (send && connman->OutboundTargetReached(true) &&
         (((pindexBestHeader != nullptr) &&
-          (pindexBestHeader->GetBlockTime() - mi->second->GetBlockTime() >
+          (pindexBestHeader->GetBlockTime() - pindex->GetBlockTime() >
            HISTORICAL_BLOCK_AGE)) ||
          inv.type == MSG_FILTERED_BLOCK) &&
         !pfrom->fWhitelisted) {
@@ -1318,7 +1318,7 @@ void static ProcessGetBlockData(const Config &config, CNode *pfrom,
         ((((pfrom->GetLocalServices() & NODE_NETWORK_LIMITED) ==
            NODE_NETWORK_LIMITED) &&
           ((pfrom->GetLocalServices() & NODE_NETWORK) != NODE_NETWORK) &&
-          (chainActive.Tip()->nHeight - mi->second->nHeight >
+          (chainActive.Tip()->nHeight - pindex->nHeight >
            (int)NODE_NETWORK_LIMITED_MIN_BLOCKS + 2)))) {
         LogPrint(BCLog::NET,
                  "Ignore block request below NODE_NETWORK_LIMITED "
@@ -1332,16 +1332,17 @@ void static ProcessGetBlockData(const Config &config, CNode *pfrom,
     }
     // Pruned nodes may have deleted the block, so check whether it's available
     // before trying to send.
-    if (send && (mi->second->nStatus.hasData())) {
+    if (send && pindex->nStatus.hasData()) {
         std::shared_ptr<const CBlock> pblock;
         if (a_recent_block &&
-            a_recent_block->GetHash() == (*mi).second->GetBlockHash()) {
+            a_recent_block->GetHash() == pindex->GetBlockHash()) {
             pblock = a_recent_block;
         } else {
             // Send block from disk
             std::shared_ptr<CBlock> pblockRead = std::make_shared<CBlock>();
-            if (!ReadBlockFromDisk(*pblockRead, (*mi).second, config))
+            if (!ReadBlockFromDisk(*pblockRead, pindex, config)) {
                 assert(!"cannot load block from disk");
+            }
             pblock = pblockRead;
         }
         if (inv.type == MSG_BLOCK) {
@@ -1385,7 +1386,7 @@ void static ProcessGetBlockData(const Config &config, CNode *pfrom,
             // we respond with the full, non-compact block.
             int nSendFlags = 0;
             if (CanDirectFetch(consensusParams) &&
-                mi->second->nHeight >=
+                pindex->nHeight >=
                     chainActive.Height() - MAX_CMPCTBLOCK_DEPTH) {
                 CBlockHeaderAndShortTxIDs cmpctblock(*pblock);
                 connman->PushMessage(
@@ -1539,8 +1540,7 @@ static bool ProcessHeadersMessage(const Config &config, CNode *pfrom,
         // don't connect before giving DoS points
         // - Once a headers message is received that is valid and does connect,
         // nUnconnectingHeaders gets reset back to 0.
-        if (mapBlockIndex.find(headers[0].hashPrevBlock) ==
-                mapBlockIndex.end() &&
+        if (!LookupBlockIndex(headers[0].hashPrevBlock) &&
             nCount < MAX_BLOCKS_TO_ANNOUNCE) {
             nodestate->nUnconnectingHeaders++;
             connman->PushMessage(
@@ -1579,7 +1579,7 @@ static bool ProcessHeadersMessage(const Config &config, CNode *pfrom,
 
         // If we don't have the last header, then they'll have given us
         // something new (if these headers are valid).
-        if (mapBlockIndex.find(hashLastBlock) == mapBlockIndex.end()) {
+        if (!LookupBlockIndex(hashLastBlock)) {
             received_new_header = true;
         }
     }
@@ -1590,13 +1590,12 @@ static bool ProcessHeadersMessage(const Config &config, CNode *pfrom,
                                 &first_invalid_header)) {
         int nDoS;
         if (state.IsInvalid(nDoS)) {
+            LOCK(cs_main);
             if (nDoS > 0) {
-                LOCK(cs_main);
                 Misbehaving(pfrom, nDoS, state.GetRejectReason());
             }
             if (punish_duplicate_invalid &&
-                mapBlockIndex.find(first_invalid_header.GetHash()) !=
-                    mapBlockIndex.end()) {
+                LookupBlockIndex(first_invalid_header.GetHash())) {
                 // Goal: don't allow outbound peers to use up our outbound
                 // connection slots if they are on incompatible chains.
                 //
@@ -2193,8 +2192,6 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
 
         LOCK(cs_main);
 
-        std::vector<CInv> vToFetch;
-
         for (CInv &inv : vInv) {
             if (interruptMsgProc) {
                 return true;
@@ -2239,11 +2236,6 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
 
             // Track requests for our stuff
             GetMainSignals().Inventory(inv.hash);
-        }
-
-        if (!vToFetch.empty()) {
-            connman->PushMessage(pfrom,
-                                 msgMaker.Make(NetMsgType::GETDATA, vToFetch));
         }
     }
 
@@ -2358,15 +2350,15 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
 
         LOCK(cs_main);
 
-        BlockMap::iterator it = mapBlockIndex.find(req.blockhash);
-        if (it == mapBlockIndex.end() || !it->second->nStatus.hasData()) {
+        const CBlockIndex *pindex = LookupBlockIndex(req.blockhash);
+        if (!pindex || !pindex->nStatus.hasData()) {
             LogPrint(BCLog::NET,
                      "Peer %d sent us a getblocktxn for a block we don't have",
                      pfrom->GetId());
             return true;
         }
 
-        if (it->second->nHeight < chainActive.Height() - MAX_BLOCKTXN_DEPTH) {
+        if (pindex->nHeight < chainActive.Height() - MAX_BLOCKTXN_DEPTH) {
             // If an older block is requested (should never happen in practice,
             // but can happen in tests) send a block response instead of a
             // blocktxn response. Sending a full block response instead of a
@@ -2387,7 +2379,7 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
         }
 
         CBlock block;
-        bool ret = ReadBlockFromDisk(block, it->second, config);
+        bool ret = ReadBlockFromDisk(block, pindex, config);
         assert(ret);
 
         SendBlockTransactions(block, req, pfrom, connman);
@@ -2411,11 +2403,10 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
         const CBlockIndex *pindex = nullptr;
         if (locator.IsNull()) {
             // If locator is null, return the hashStop block
-            BlockMap::iterator mi = mapBlockIndex.find(hashStop);
-            if (mi == mapBlockIndex.end()) {
+            pindex = LookupBlockIndex(hashStop);
+            if (!pindex) {
                 return true;
             }
-            pindex = (*mi).second;
 
             if (!BlockRequestAllowed(pindex, chainparams.GetConsensus())) {
                 LogPrint(BCLog::NET,
@@ -2692,8 +2683,7 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
         {
             LOCK(cs_main);
 
-            if (mapBlockIndex.find(cmpctblock.header.hashPrevBlock) ==
-                mapBlockIndex.end()) {
+            if (!LookupBlockIndex(cmpctblock.header.hashPrevBlock)) {
                 // Doesn't connect (or is genesis), instead of DoSing in
                 // AcceptBlockHeader, request deeper headers
                 if (!IsInitialBlockDownload()) {
@@ -2706,8 +2696,7 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
                 return true;
             }
 
-            if (mapBlockIndex.find(cmpctblock.header.GetHash()) ==
-                mapBlockIndex.end()) {
+            if (!LookupBlockIndex(cmpctblock.header.GetHash())) {
                 received_new_header = true;
             }
         }
@@ -2939,6 +2928,9 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
                             &fNewBlock);
             if (fNewBlock) {
                 pfrom->nLastBlockTime = GetTime();
+            } else {
+                LOCK(cs_main);
+                mapBlockSource.erase(pblock->GetHash());
             }
 
             // hold cs_main for CBlockIndex::IsValid()
@@ -3039,6 +3031,9 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
                             &fNewBlock);
             if (fNewBlock) {
                 pfrom->nLastBlockTime = GetTime();
+            } else {
+                LOCK(cs_main);
+                mapBlockSource.erase(pblock->GetHash());
             }
         }
     }
@@ -3099,6 +3094,9 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
         ProcessNewBlock(config, pblock, forceProcessing, &fNewBlock);
         if (fNewBlock) {
             pfrom->nLastBlockTime = GetTime();
+        } else {
+            LOCK(cs_main);
+            mapBlockSource.erase(pblock->GetHash());
         }
     }
 
@@ -3879,9 +3877,8 @@ bool PeerLogicValidation::SendMessages(const Config &config, CNode *pto,
             // send all headers past that one. If we come across an headers that
             // aren't on chainActive, give up.
             for (const uint256 &hash : pto->vBlockHashesToAnnounce) {
-                BlockMap::iterator mi = mapBlockIndex.find(hash);
-                assert(mi != mapBlockIndex.end());
-                const CBlockIndex *pindex = mi->second;
+                const CBlockIndex *pindex = LookupBlockIndex(hash);
+                assert(pindex);
                 if (chainActive[pindex->nHeight] != pindex) {
                     // Bail out if we reorged away from this block
                     fRevertToInv = true;
@@ -3983,9 +3980,8 @@ bool PeerLogicValidation::SendMessages(const Config &config, CNode *pto,
             if (!pto->vBlockHashesToAnnounce.empty()) {
                 const uint256 &hashToAnnounce =
                     pto->vBlockHashesToAnnounce.back();
-                BlockMap::iterator mi = mapBlockIndex.find(hashToAnnounce);
-                assert(mi != mapBlockIndex.end());
-                const CBlockIndex *pindex = mi->second;
+                const CBlockIndex *pindex = LookupBlockIndex(hashToAnnounce);
+                assert(pindex);
 
                 // Warn if we're announcing a block that is not on the main
                 // chain. This should be very rare and could be optimized out.

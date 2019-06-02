@@ -3,33 +3,31 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "rpc/rawtransaction.h"
-#include "base58.h"
-#include "chain.h"
-#include "coins.h"
-#include "config.h"
-#include "consensus/validation.h"
-#include "core_io.h"
-#include "dstencode.h"
-#include "init.h"
-#include "keystore.h"
-#include "merkleblock.h"
-#include "net.h"
-#include "policy/policy.h"
-#include "primitives/transaction.h"
-#include "rpc/safemode.h"
-#include "rpc/server.h"
-#include "rpc/tojson.h"
-#include "script/script.h"
-#include "script/script_error.h"
-#include "script/sign.h"
-#include "script/standard.h"
-#include "txmempool.h"
-#include "uint256.h"
-#include "utilstrencodings.h"
-#include "validation.h"
+#include <base58.h>
+#include <chain.h>
+#include <coins.h>
+#include <config.h>
+#include <consensus/validation.h>
+#include <core_io.h>
+#include <dstencode.h>
+#include <init.h>
+#include <keystore.h>
+#include <merkleblock.h>
+#include <net.h>
+#include <policy/policy.h>
+#include <primitives/transaction.h>
+#include <rpc/rawtransaction.h>
+#include <rpc/server.h>
+#include <script/script.h>
+#include <script/script_error.h>
+#include <script/sign.h>
+#include <script/standard.h>
+#include <txmempool.h>
+#include <uint256.h>
+#include <utilstrencodings.h>
+#include <validation.h>
 #ifdef ENABLE_WALLET
-#include "wallet/rpcwallet.h"
+#include <wallet/rpcwallet.h>
 #endif
 
 #include <cstdint>
@@ -119,8 +117,8 @@ void TxToJSONExpanded(const CTransaction& tx, const uint256 hashBlock, UniValue&
 
 }
 
-void TxToJSON(const CTransaction &tx, const uint256 hashBlock,
-              UniValue &entry) {
+static void TxToJSON(const CTransaction &tx, const uint256 hashBlock,
+                     UniValue &entry) {
     // Call into TxToUniv() in bitcoin-common to decode the transaction hex.
     //
     // Blockchain contextual information (confirmations and blocktime) is not
@@ -130,9 +128,8 @@ void TxToJSON(const CTransaction &tx, const uint256 hashBlock,
 
     if (!hashBlock.IsNull()) {
         entry.pushKV("blockhash", hashBlock.GetHex());
-        BlockMap::iterator mi = mapBlockIndex.find(hashBlock);
-        if (mi != mapBlockIndex.end() && (*mi).second) {
-            CBlockIndex *pindex = (*mi).second;
+        CBlockIndex *pindex = LookupBlockIndex(hashBlock);
+        if (pindex) {
             if (chainActive.Contains(pindex)) {
                 entry.pushKV("confirmations",
                              1 + chainActive.Height() - pindex->nHeight);
@@ -266,15 +263,12 @@ static UniValue getrawtransaction(const Config &config,
 
     if (!request.params[2].isNull()) {
         uint256 blockhash = ParseHashV(request.params[2], "parameter 3");
-        if (!blockhash.IsNull()) {
-            BlockMap::iterator it = mapBlockIndex.find(blockhash);
-            if (it == mapBlockIndex.end()) {
-                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                                   "Block hash not found");
-            }
-            blockindex = it->second;
-            in_active_chain = chainActive.Contains(blockindex);
+        blockindex = LookupBlockIndex(blockhash);
+        if (!blockindex) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                               "Block hash not found");
         }
+        in_active_chain = chainActive.Contains(blockindex);
     }
 
     CTransactionRef tx;
@@ -391,10 +385,10 @@ static UniValue gettxoutproof(const Config &config,
     uint256 hashBlock;
     if (!request.params[1].isNull()) {
         hashBlock = uint256S(request.params[1].get_str());
-        if (!mapBlockIndex.count(hashBlock)) {
+        pblockindex = LookupBlockIndex(hashBlock);
+        if (!pblockindex) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
         }
-        pblockindex = mapBlockIndex[hashBlock];
     } else {
         // Loop through txids and try to find which block they're in. Exit loop
         // once a block is found.
@@ -415,11 +409,10 @@ static UniValue gettxoutproof(const Config &config,
                                "Transaction not yet in block");
         }
 
-        if (!mapBlockIndex.count(hashBlock)) {
+        pblockindex = LookupBlockIndex(hashBlock);
+        if (!pblockindex) {
             throw JSONRPCError(RPC_INTERNAL_ERROR, "Transaction index corrupt");
         }
-
-        pblockindex = mapBlockIndex[hashBlock];
     }
 
     CBlock block;
@@ -479,8 +472,8 @@ static UniValue verifytxoutproof(const Config &config,
 
     LOCK(cs_main);
 
-    if (!mapBlockIndex.count(merkleBlock.header.GetHash()) ||
-        !chainActive.Contains(mapBlockIndex[merkleBlock.header.GetHash()])) {
+    const CBlockIndex *pindex = LookupBlockIndex(merkleBlock.header.GetHash());
+    if (!pindex || !chainActive.Contains(pindex)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
                            "Block not found in chain");
     }
@@ -1325,6 +1318,7 @@ static UniValue signrawtransaction(const Config &config,
     // Make a JSONRPCRequest to pass on to the right signrawtransaction* command
     JSONRPCRequest new_request;
     new_request.id = request.id;
+    new_request.URI = std::move(request.URI);
     new_request.params.setArray();
 
     // For signing with private keys
@@ -1381,7 +1375,6 @@ static UniValue sendrawtransaction(const Config &config,
             HelpExampleRpc("sendrawtransaction", "\"signedhex\""));
     }
 
-    ObserveSafeMode();
     LOCK(cs_main);
     RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
 
@@ -1474,7 +1467,6 @@ static UniValue validaterawtransaction(const Config &config,
             HelpExampleRpc("validaterawtransaction", "\"signedhex\""));
     }
 
-    ObserveSafeMode();
     LOCK(cs_main);
     RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
 

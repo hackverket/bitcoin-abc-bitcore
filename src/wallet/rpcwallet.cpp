@@ -3,29 +3,29 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "amount.h"
-#include "chain.h"
-#include "chainparams.h" // for GetConsensus.
-#include "config.h"
-#include "consensus/validation.h"
-#include "core_io.h"
-#include "dstencode.h"
-#include "net.h"
-#include "policy/fees.h"
-#include "policy/policy.h"
-#include "rpc/mining.h"
-#include "rpc/misc.h"
-#include "rpc/rawtransaction.h"
-#include "rpc/safemode.h"
-#include "rpc/server.h"
-#include "timedata.h"
-#include "util.h"
-#include "utilmoneystr.h"
-#include "validation.h"
-#include "wallet/coincontrol.h"
-#include "wallet/wallet.h"
-#include "wallet/walletdb.h"
-#include "wallet/walletutil.h"
+#include <amount.h>
+#include <chain.h>
+#include <chainparams.h> // for GetConsensus.
+#include <config.h>
+#include <consensus/validation.h>
+#include <core_io.h>
+#include <dstencode.h>
+#include <net.h>
+#include <policy/fees.h>
+#include <policy/policy.h>
+#include <rpc/mining.h>
+#include <rpc/misc.h>
+#include <rpc/rawtransaction.h>
+#include <rpc/server.h>
+#include <rpc/util.h>
+#include <timedata.h>
+#include <util.h>
+#include <utilmoneystr.h>
+#include <validation.h>
+#include <wallet/coincontrol.h>
+#include <wallet/wallet.h>
+#include <wallet/walletdb.h>
+#include <wallet/walletutil.h>
 // Input src/init.h (not wallet/init.h) for StartShutdown
 #include <init.h>
 
@@ -115,7 +115,8 @@ void WalletTxToJSON(const CWalletTx &wtx, UniValue &entry) {
     if (confirms > 0) {
         entry.pushKV("blockhash", wtx.hashBlock.GetHex());
         entry.pushKV("blockindex", wtx.nIndex);
-        entry.pushKV("blocktime", mapBlockIndex[wtx.hashBlock]->GetBlockTime());
+        entry.pushKV("blocktime",
+                     LookupBlockIndex(wtx.hashBlock)->GetBlockTime());
     } else {
         entry.pushKV("trusted", wtx.IsTrusted());
     }
@@ -532,8 +533,6 @@ static UniValue sendtoaddress(const Config &config,
                                             "outpost\""));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -608,8 +607,6 @@ static UniValue listaddressgroupings(const Config &config,
             HelpExampleCli("listaddressgroupings", "") +
             HelpExampleRpc("listaddressgroupings", ""));
     }
-
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -751,8 +748,6 @@ static UniValue getreceivedbyaddress(const Config &config,
                            "\"1D1ZrZNe3JUo7ZycKEYQQiQAWd9y54F4XX\", 6"));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -834,7 +829,6 @@ UniValue getreceivedbylabel(const Config &config,
             "\nAs a json rpc call\n" +
             HelpExampleRpc("getreceivedbylabel", "\"tabby\", 6"));
     }
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -933,8 +927,6 @@ static UniValue getbalance(const Config &config,
             HelpExampleRpc("getbalance", "\"*\", 6"));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -975,8 +967,6 @@ static UniValue getunconfirmedbalance(const Config &config,
             "getunconfirmedbalance\n"
             "Returns the server's total unconfirmed balance\n");
     }
-
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -1030,7 +1020,6 @@ static UniValue movecmd(const Config &config, const JSONRPCRequest &request) {
                 "\"timotei\", \"akiko\", 0.01, 6, \"happy birthday!\""));
     }
 
-    ObserveSafeMode();
     LOCK2(cs_main, pwallet->cs_wallet);
 
     std::string strFrom = LabelFromValue(request.params[0]);
@@ -1118,8 +1107,6 @@ static UniValue sendfrom(const Config &config, const JSONRPCRequest &request) {
                            "\"tabby\", \"1M72Sfpbz1BPpXFHz9m3CdqATR44Jvaydd\", "
                            "0.01, 6, \"donation\", \"seans outpost\""));
     }
-
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -1249,8 +1236,6 @@ static UniValue sendmany(const Config &config, const JSONRPCRequest &request) {
                            " 6, \"testing\""));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -1355,8 +1340,8 @@ static UniValue sendmany(const Config &config, const JSONRPCRequest &request) {
     return tx->GetId().GetHex();
 }
 
-static UniValue addmultisigaddress(const Config &config,
-                                   const JSONRPCRequest &request) {
+UniValue addmultisigaddress(const Config &config,
+                            const JSONRPCRequest &request) {
     CWallet *const pwallet = GetWalletForJSONRPCRequest(request);
     if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
         return NullUniValue;
@@ -1386,8 +1371,18 @@ static UniValue addmultisigaddress(const Config &config,
             "assign the addresses to.\n"
 
             "\nResult:\n"
-            "\"address\"         (string) A bitcoin address associated with "
-            "the keys.\n"
+            "{\n"
+            "  \"address\":\"multisigaddress\",    (string) The value of the "
+            "new multisig address.\n"
+            "  \"redeemScript\":\"script\"         (string) The string value "
+            "of the hex-encoded redemption script.\n"
+            "}\n"
+            "\nResult (DEPRECATED. To see this result in v0.19.6 instead, "
+            "please start bitcoind with -deprecatedrpc=addmultisigaddress).\n"
+            "        clients should transition to the new output api before "
+            "upgrading to v0.20.\n"
+            "\"address\"                         (string) A bitcoin address "
+            "associated with the keys.\n"
 
             "\nExamples:\n"
             "\nAdd a multisig address from 2 addresses\n" +
@@ -1410,13 +1405,38 @@ static UniValue addmultisigaddress(const Config &config,
         label = LabelFromValue(request.params[2]);
     }
 
+    int required = request.params[0].get_int();
+
+    // Get the public keys
+    const UniValue &keys_or_addrs = request.params[1].get_array();
+    std::vector<CPubKey> pubkeys;
+    for (size_t i = 0; i < keys_or_addrs.size(); ++i) {
+        if (IsHex(keys_or_addrs[i].get_str()) &&
+            (keys_or_addrs[i].get_str().length() == 66 ||
+             keys_or_addrs[i].get_str().length() == 130)) {
+            pubkeys.push_back(HexToPubKey(keys_or_addrs[i].get_str()));
+        } else {
+            pubkeys.push_back(AddrToPubKey(config.GetChainParams(), pwallet,
+                                           keys_or_addrs[i].get_str()));
+        }
+    }
+
     // Construct using pay-to-script-hash:
-    CScript inner = createmultisig_redeemScript(pwallet, request.params);
+    CScript inner = CreateMultisigRedeemscript(required, pubkeys);
     CScriptID innerID(inner);
     pwallet->AddCScript(inner);
 
     pwallet->SetAddressBook(innerID, label, "send");
-    return EncodeDestination(innerID);
+
+    // Return old style interface
+    if (IsDeprecatedRPCEnabled(gArgs, "addmultisigaddress")) {
+        return EncodeDestination(innerID);
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", EncodeDestination(innerID));
+    result.pushKV("redeemScript", HexStr(inner.begin(), inner.end()));
+    return result;
 }
 
 struct tallyitem {
@@ -1641,8 +1661,6 @@ static UniValue listreceivedbyaddress(const Config &config,
                 "6, true, true, \"1M72Sfpbz1BPpXFHz9m3CdqATR44Jvaydd\""));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -1692,8 +1710,6 @@ UniValue listreceivedbylabel(const Config &config,
             HelpExampleCli("listreceivedbylabel", "6 true") +
             HelpExampleRpc("listreceivedbylabel", "6, true, true"));
     }
-
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -1924,8 +1940,6 @@ static UniValue listtransactions(const Config &config,
             HelpExampleRpc("listtransactions", "\"*\", 20, 100"));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -2046,8 +2060,6 @@ static UniValue listaccounts(const Config &config,
             HelpExampleCli("listaccounts", "6") + "\nAs json rpc call\n" +
             HelpExampleRpc("listaccounts", "6"));
     }
-
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -2222,8 +2234,6 @@ static UniValue listsinceblock(const Config &config,
                                              "\", 6"));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -2242,11 +2252,10 @@ static UniValue listsinceblock(const Config &config,
         uint256 blockId;
 
         blockId.SetHex(request.params[0].get_str());
-        BlockMap::iterator it = mapBlockIndex.find(blockId);
-        if (it == mapBlockIndex.end()) {
+        paltindex = pindex = LookupBlockIndex(blockId);
+        if (!pindex) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
         }
-        paltindex = pindex = it->second;
         if (chainActive[pindex->nHeight] != pindex) {
             // the block being asked for is a part of a deactivated chain;
             // we don't want to depend on its perceived height in the block
@@ -2410,8 +2419,6 @@ static UniValue gettransaction(const Config &config,
                                              "\""));
     }
 
-    ObserveSafeMode();
-
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
     pwallet->BlockUntilSyncedToCurrentChain();
@@ -2451,8 +2458,7 @@ static UniValue gettransaction(const Config &config,
     ListTransactions(pwallet, wtx, "*", 0, false, details, filter);
     entry.pushKV("details", details);
 
-    std::string strHex =
-        EncodeHexTx(static_cast<CTransaction>(wtx), RPCSerializationFlags());
+    std::string strHex = EncodeHexTx(*wtx.tx, RPCSerializationFlags());
     entry.pushKV("hex", strHex);
 
     return entry;
@@ -2488,8 +2494,6 @@ static UniValue abandontransaction(const Config &config,
                                                  "e2115b9345e16c5cf302fc80e9d5f"
                                                  "bf5d48d\""));
     }
-
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -3021,7 +3025,6 @@ static UniValue listlockunspent(const Config &config,
             "\nAs a json rpc call\n" + HelpExampleRpc("listlockunspent", ""));
     }
 
-    ObserveSafeMode();
     LOCK2(cs_main, pwallet->cs_wallet);
 
     std::vector<COutPoint> vOutpts;
@@ -3126,8 +3129,6 @@ static UniValue getwalletinfo(const Config &config,
             HelpExampleCli("getwalletinfo", "") +
             HelpExampleRpc("getwalletinfo", ""));
     }
-
-    ObserveSafeMode();
 
     // Make sure the results are valid at least up to the most recent block
     // the user could have gotten from another RPC command prior to now
@@ -3334,8 +3335,6 @@ static UniValue listunspent(const Config &config,
                 "6, 9999999, [] , true, { \"minimumAmount\": 0.005 } "));
     }
 
-    ObserveSafeMode();
-
     int nMinDepth = 1;
     if (request.params.size() > 0 && !request.params[0].isNull()) {
         RPCTypeCheckArgument(request.params[0], UniValue::VNUM);
@@ -3502,8 +3501,8 @@ static UniValue fundrawtransaction(const Config &config,
             "false) Also select inputs which are watch only\n"
             "     \"lockUnspents\"           (boolean, optional, default "
             "false) Lock selected unspent outputs\n"
-            "     \"reserveChangeKey\"       (boolean, optional, default true) "
-            "Reserves the change output key from the keypool\n"
+            "     \"reserveChangeKey\"       (boolean, optional) "
+            "DEPRECATED.  Reserves the change output key from the keypool\n"
             "     \"feeRate\"                (numeric, optional, default not "
             "set: makes wallet determine the fee) Set a specific feerate (" +
             CURRENCY_UNIT +
@@ -3545,7 +3544,6 @@ static UniValue fundrawtransaction(const Config &config,
             HelpExampleCli("sendrawtransaction", "\"signedtransactionhex\""));
     }
 
-    ObserveSafeMode();
     RPCTypeCheck(request.params, {UniValue::VSTR});
 
     // Make sure the results are valid at least up to the most recent block
@@ -3555,7 +3553,8 @@ static UniValue fundrawtransaction(const Config &config,
     CCoinControl coinControl;
     int changePosition = -1;
     bool lockUnspents = false;
-    bool reserveChangeKey = true;
+    // DEPRECATED, should be removed in 0.20
+    bool reserveChangeKey = false;
     UniValue subtractFeeFromOutputs;
     std::set<int> setSubtractFeeFromOutputs;
 
@@ -3575,6 +3574,7 @@ static UniValue fundrawtransaction(const Config &config,
                     {"changePosition", UniValueType(UniValue::VNUM)},
                     {"includeWatching", UniValueType(UniValue::VBOOL)},
                     {"lockUnspents", UniValueType(UniValue::VBOOL)},
+                    // DEPRECATED, should be removed in 0.20
                     {"reserveChangeKey", UniValueType(UniValue::VBOOL)},
                     // will be checked below
                     {"feeRate", UniValueType()},
@@ -3609,8 +3609,20 @@ static UniValue fundrawtransaction(const Config &config,
                 lockUnspents = options["lockUnspents"].get_bool();
             }
 
+            // DEPRECATED, should be removed in v0.20
             if (options.exists("reserveChangeKey")) {
-                reserveChangeKey = options["reserveChangeKey"].get_bool();
+                if (!IsDeprecatedRPCEnabled(gArgs, "fundrawtransaction")) {
+                    throw JSONRPCError(
+                        RPC_METHOD_DEPRECATED,
+                        "fundrawtransaction -reserveChangeKey is deprecated "
+                        "and will be fully removed in v0.20.  To use the "
+                        "-reserveChangeKey option in v0.19, restart bitcoind "
+                        "with -deprecatedrpc=fundrawtransaction.\nProjects "
+                        "should transition to expecting change addresses "
+                        "removed from the keypool before upgrading to v0.20");
+                } else {
+                    reserveChangeKey = options["reserveChangeKey"].get_bool();
+                }
             }
 
             if (options.exists("feeRate")) {
@@ -3852,30 +3864,46 @@ UniValue rescanblockchain(const Config &config, const JSONRPCRequest &request) {
             HelpExampleRpc("rescanblockchain", "100000 120000"));
     }
 
-    LOCK2(cs_main, pwallet->cs_wallet);
-
-    CBlockIndex *pindexStart = chainActive.Genesis();
-    CBlockIndex *pindexStop = nullptr;
-    if (!request.params[0].isNull()) {
-        pindexStart = chainActive[request.params[0].get_int()];
-        if (!pindexStart) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid start_height");
-        }
+    WalletRescanReserver reserver(pwallet);
+    if (!reserver.reserve()) {
+        throw JSONRPCError(
+            RPC_WALLET_ERROR,
+            "Wallet is currently rescanning. Abort existing rescan or wait.");
     }
 
-    if (!request.params[1].isNull()) {
-        pindexStop = chainActive[request.params[1].get_int()];
-        if (!pindexStop) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid stop_height");
-        } else if (pindexStop->nHeight < pindexStart->nHeight) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER,
-                               "stop_height must be greater then start_height");
+    CBlockIndex *pindexStart = nullptr;
+    CBlockIndex *pindexStop = nullptr;
+    CBlockIndex *pChainTip = nullptr;
+    {
+        LOCK(cs_main);
+        pindexStart = chainActive.Genesis();
+        pChainTip = chainActive.Tip();
+
+        if (!request.params[0].isNull()) {
+            pindexStart = chainActive[request.params[0].get_int()];
+            if (!pindexStart) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "Invalid start_height");
+            }
+        }
+
+        if (!request.params[1].isNull()) {
+            pindexStop = chainActive[request.params[1].get_int()];
+            if (!pindexStop) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "Invalid stop_height");
+            } else if (pindexStop->nHeight < pindexStart->nHeight) {
+                throw JSONRPCError(
+                    RPC_INVALID_PARAMETER,
+                    "stop_height must be greater then start_height");
+            }
         }
     }
 
     // We can't rescan beyond non-pruned blocks, stop and throw an error
     if (fPruneMode) {
-        CBlockIndex *block = pindexStop ? pindexStop : chainActive.Tip();
+        LOCK(cs_main);
+        CBlockIndex *block = pindexStop ? pindexStop : pChainTip;
         while (block && block->nHeight >= pindexStart->nHeight) {
             if (!block->nStatus.hasData()) {
                 throw JSONRPCError(RPC_MISC_ERROR,
@@ -3887,20 +3915,19 @@ UniValue rescanblockchain(const Config &config, const JSONRPCRequest &request) {
         }
     }
 
-    CBlockIndex *stopBlock =
-        pwallet->ScanForWalletTransactions(pindexStart, pindexStop, true);
+    CBlockIndex *stopBlock = pwallet->ScanForWalletTransactions(
+        pindexStart, pindexStop, reserver, true);
     if (!stopBlock) {
         if (pwallet->IsAbortingRescan()) {
             throw JSONRPCError(RPC_MISC_ERROR, "Rescan aborted.");
         }
         // if we got a nullptr returned, ScanForWalletTransactions did rescan up
         // to the requested stopindex
-        stopBlock = pindexStop ? pindexStop : chainActive.Tip();
+        stopBlock = pindexStop ? pindexStop : pChainTip;
     } else {
         throw JSONRPCError(RPC_MISC_ERROR,
                            "Rescan failed. Potentially corrupted data files.");
     }
-
     UniValue response(UniValue::VOBJ);
     response.pushKV("start_height", pindexStart->nHeight);
     response.pushKV("stop_height", stopBlock->nHeight);

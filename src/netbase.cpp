@@ -3,22 +3,20 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "netbase.h"
+#include <netbase.h>
 
-#include "hash.h"
-#include "random.h"
-#include "sync.h"
-#include "uint256.h"
-#include "util.h"
-#include "utilstrencodings.h"
+#include <hash.h>
+#include <random.h>
+#include <sync.h>
+#include <uint256.h>
+#include <util.h>
+#include <utilstrencodings.h>
 
 #include <atomic>
 
 #ifndef WIN32
 #include <fcntl.h>
 #endif
-
-#include <boost/algorithm/string/case_conv.hpp> // for to_lower()
 
 #if !defined(MSG_NOSIGNAL)
 #define MSG_NOSIGNAL 0
@@ -37,15 +35,20 @@ static const int SOCKS5_RECV_TIMEOUT = 20 * 1000;
 static std::atomic<bool> interruptSocks5Recv(false);
 
 enum Network ParseNetwork(std::string net) {
-    boost::to_lower(net);
+    Downcase(net);
     if (net == "ipv4") {
         return NET_IPV4;
     }
     if (net == "ipv6") {
         return NET_IPV6;
     }
-    if (net == "tor" || net == "onion") {
-        return NET_TOR;
+    if (net == "onion") {
+        return NET_ONION;
+    }
+    if (net == "tor") {
+        LogPrintf("Warning: net name 'tor' is deprecated and will be removed "
+                  "in the future. You should use 'onion' instead.\n");
+        return NET_ONION;
     }
     return NET_UNROUTABLE;
 }
@@ -56,7 +59,7 @@ std::string GetNetworkName(enum Network net) {
             return "ipv4";
         case NET_IPV6:
             return "ipv6";
-        case NET_TOR:
+        case NET_ONION:
             return "onion";
         default:
             return "";
@@ -710,14 +713,17 @@ std::string NetworkErrorString(int err) {
 #else
 std::string NetworkErrorString(int err) {
     char buf[256];
-    const char *s = buf;
     buf[0] = 0;
-/* Too bad there are two incompatible implementations of the
- * thread-safe strerror. */
+    /**
+     * Too bad there are two incompatible implementations of the
+     * thread-safe strerror.
+     */
+    const char *s;
 #ifdef STRERROR_R_CHAR_P
     /* GNU variant can return a pointer outside the passed buffer */
     s = strerror_r(err, buf, sizeof(buf));
 #else
+    s = buf;
     /* POSIX variant always returns message in buffer */
     if (strerror_r(err, buf, sizeof(buf))) {
         buf[0] = 0;
@@ -736,6 +742,10 @@ bool CloseSocket(SOCKET &hSocket) {
 #else
     int ret = close(hSocket);
 #endif
+    if (ret) {
+        LogPrintf("Socket close failed: %d. Error: %s\n", hSocket,
+                  NetworkErrorString(WSAGetLastError()));
+    }
     hSocket = INVALID_SOCKET;
     return ret != SOCKET_ERROR;
 }

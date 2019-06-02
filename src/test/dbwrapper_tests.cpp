@@ -2,10 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "dbwrapper.h"
-#include "random.h"
-#include "test/test_bitcoin.h"
-#include "uint256.h"
+#include <dbwrapper.h>
+
+#include <random.h>
+#include <uint256.h>
+
+#include <test/test_bitcoin.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -167,7 +169,7 @@ BOOST_AUTO_TEST_CASE(existing_data_no_obfuscate) {
 
     // Set up a non-obfuscated wrapper to write some initial data.
     std::unique_ptr<CDBWrapper> dbw =
-        MakeUnique<CDBWrapper>(ph, (1 << 10), false, false, false);
+        std::make_unique<CDBWrapper>(ph, (1 << 10), false, false, false);
     char key = 'k';
     uint256 in = InsecureRand256();
     uint256 res;
@@ -210,7 +212,7 @@ BOOST_AUTO_TEST_CASE(existing_data_reindex) {
 
     // Set up a non-obfuscated wrapper to write some initial data.
     std::unique_ptr<CDBWrapper> dbw =
-        MakeUnique<CDBWrapper>(ph, (1 << 10), false, false, false);
+        std::make_unique<CDBWrapper>(ph, (1 << 10), false, false, false);
     char key = 'k';
     uint256 in = InsecureRand256();
     uint256 res;

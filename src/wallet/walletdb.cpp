@@ -4,21 +4,20 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "wallet/walletdb.h"
+#include <wallet/walletdb.h>
 
-#include "base58.h"
-#include "consensus/tx_verify.h"
-#include "consensus/validation.h"
-#include "dstencode.h"
-#include "fs.h"
-#include "protocol.h"
-#include "serialize.h"
-#include "sync.h"
-#include "util.h"
-#include "utiltime.h"
-#include "wallet/wallet.h"
+#include <base58.h>
+#include <consensus/tx_verify.h>
+#include <consensus/validation.h>
+#include <dstencode.h>
+#include <fs.h>
+#include <protocol.h>
+#include <serialize.h>
+#include <sync.h>
+#include <util.h>
+#include <utiltime.h>
+#include <wallet/wallet.h>
 
-#include <boost/thread.hpp>
 #include <boost/version.hpp>
 
 #include <atomic>
@@ -302,8 +301,8 @@ bool ReadKeyValue(CWallet *pwallet, CDataStream &ssKey, CDataStream &ssValue,
             ssValue >> wtx;
             CValidationState state;
             bool isValid = wtx.IsCoinBase()
-                               ? CheckCoinbase(wtx, state)
-                               : CheckRegularTransaction(wtx, state);
+                               ? CheckCoinbase(*wtx.tx, state)
+                               : CheckRegularTransaction(*wtx.tx, state);
             if (!isValid || wtx.GetId() != txid) {
                 return false;
             }

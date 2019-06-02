@@ -89,7 +89,14 @@ class RawTransactionsTest(BitcoinTestFramework):
         assert_raises_rpc_error(-8, "parameter 3 must be of length 64",
                                 self.nodes[0].getrawtransaction, tx, True, "abcd1234")
         assert_raises_rpc_error(-5, "Block hash not found", self.nodes[0].getrawtransaction,
-                                tx, True, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                                tx, True, "0000000000000000000000000000000000000000000000000000000000000000")
+        # Undo the blocks and check in_active_chain
+        self.nodes[0].invalidateblock(block1)
+        gottx = self.nodes[0].getrawtransaction(
+            txid=tx, verbose=True, blockhash=block1)
+        assert_equal(gottx['in_active_chain'], False)
+        self.nodes[0].reconsiderblock(block1)
+        assert_equal(self.nodes[0].getbestblockhash(), block2)
 
         #
         # RAW TX MULTISIG TESTS #
@@ -101,8 +108,18 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr1Obj = self.nodes[2].validateaddress(addr1)
         addr2Obj = self.nodes[2].validateaddress(addr2)
 
-        mSigObj = self.nodes[2].addmultisigaddress(
+        # Tests for createmultisig and addmultisigaddress
+        assert_raises_rpc_error(-5, "Invalid public key",
+                                self.nodes[0].createmultisig, 1, ["01020304"])
+        # createmultisig can only take public keys
+        self.nodes[0].createmultisig(
             2, [addr1Obj['pubkey'], addr2Obj['pubkey']])
+        # addmultisigaddress can take both pubkeys and addresses so long as they are in the wallet, which is tested here.
+        assert_raises_rpc_error(-5, "Invalid public key",
+                                self.nodes[0].createmultisig, 2, [addr1Obj['pubkey'], addr1])
+
+        mSigObj = self.nodes[2].addmultisigaddress(
+            2, [addr1Obj['pubkey'], addr1])['address']
 
         # use balance deltas instead of absolute values
         bal = self.nodes[2].getbalance()
@@ -127,7 +144,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr3Obj = self.nodes[2].validateaddress(addr3)
 
         mSigObj = self.nodes[2].addmultisigaddress(
-            2, [addr1Obj['pubkey'], addr2Obj['pubkey'], addr3Obj['pubkey']])
+            2, [addr1Obj['pubkey'], addr2Obj['pubkey'], addr3Obj['pubkey']])['address']
 
         txId = self.nodes[0].sendtoaddress(mSigObj, 2.2)
         decTx = self.nodes[0].gettransaction(txId)
@@ -188,9 +205,9 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr2Obj = self.nodes[2].validateaddress(addr2)
 
         self.nodes[1].addmultisigaddress(
-            2, [addr1Obj['pubkey'], addr2Obj['pubkey']])
+            2, [addr1Obj['pubkey'], addr2Obj['pubkey']])['address']
         mSigObj = self.nodes[2].addmultisigaddress(
-            2, [addr1Obj['pubkey'], addr2Obj['pubkey']])
+            2, [addr1Obj['pubkey'], addr2Obj['pubkey']])['address']
         mSigObjValid = self.nodes[2].validateaddress(mSigObj)
 
         txId = self.nodes[0].sendtoaddress(mSigObj, 2.2)

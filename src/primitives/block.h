@@ -6,9 +6,9 @@
 #ifndef BITCOIN_PRIMITIVES_BLOCK_H
 #define BITCOIN_PRIMITIVES_BLOCK_H
 
-#include "primitives/transaction.h"
-#include "serialize.h"
-#include "uint256.h"
+#include <primitives/transaction.h>
+#include <serialize.h>
+#include <uint256.h>
 
 /**
  * Nodes collect new transactions into a block, hash them into a hash tree, and
@@ -77,7 +77,7 @@ public:
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(*static_cast<CBlockHeader *>(this));
+        READWRITEAS(CBlockHeader, *this);
         READWRITE(vtx);
     }
 

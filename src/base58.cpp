@@ -2,15 +2,16 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "base58.h"
+#include <base58.h>
 
-#include "hash.h"
-#include "script/script.h"
-#include "uint256.h"
-#include "utilstrencodings.h"
+#include <hash.h>
+#include <script/script.h>
+#include <uint256.h>
+#include <utilstrencodings.h>
 
 #include <boost/variant/apply_visitor.hpp>
 #include <boost/variant/static_visitor.hpp>
+
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -121,7 +122,7 @@ std::string EncodeBase58(const uint8_t *pbegin, const uint8_t *pend) {
 }
 
 std::string EncodeBase58(const std::vector<uint8_t> &vch) {
-    return EncodeBase58(&vch[0], &vch[0] + vch.size());
+    return EncodeBase58(vch.data(), vch.data() + vch.size());
 }
 
 bool DecodeBase58(const std::string &str, std::vector<uint8_t> &vchRet) {
@@ -141,7 +142,7 @@ bool DecodeBase58Check(const char *psz, std::vector<uint8_t> &vchRet) {
         vchRet.clear();
         return false;
     }
-    // re-calculate the checksum, insure it matches the included 4-byte checksum
+    // re-calculate the checksum, ensure it matches the included 4-byte checksum
     uint256 hash = Hash(vchRet.begin(), vchRet.end() - 4);
     if (memcmp(&hash, &vchRet.end()[-4], 4) != 0) {
         vchRet.clear();
@@ -165,7 +166,7 @@ void CBase58Data::SetData(const std::vector<uint8_t> &vchVersionIn,
     vchVersion = vchVersionIn;
     vchData.resize(nSize);
     if (!vchData.empty()) {
-        memcpy(&vchData[0], pdata, nSize);
+        memcpy(vchData.data(), pdata, nSize);
     }
 }
 
@@ -185,9 +186,9 @@ bool CBase58Data::SetString(const char *psz, unsigned int nVersionBytes) {
     vchVersion.assign(vchTemp.begin(), vchTemp.begin() + nVersionBytes);
     vchData.resize(vchTemp.size() - nVersionBytes);
     if (!vchData.empty()) {
-        memcpy(&vchData[0], &vchTemp[nVersionBytes], vchData.size());
+        memcpy(vchData.data(), vchTemp.data() + nVersionBytes, vchData.size());
     }
-    memory_cleanse(&vchTemp[0], vchTemp.size());
+    memory_cleanse(vchTemp.data(), vchTemp.size());
     return true;
 }
 

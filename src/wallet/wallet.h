@@ -7,19 +7,17 @@
 #ifndef BITCOIN_WALLET_WALLET_H
 #define BITCOIN_WALLET_WALLET_H
 
-#include "amount.h"
-#include "script/ismine.h"
-#include "script/sign.h"
-#include "streams.h"
-#include "tinyformat.h"
-#include "ui_interface.h"
-#include "utilstrencodings.h"
-#include "validationinterface.h"
-#include "wallet/crypter.h"
-#include "wallet/rpcwallet.h"
-#include "wallet/walletdb.h"
-
-#include <boost/thread.hpp>
+#include <amount.h>
+#include <script/ismine.h>
+#include <script/sign.h>
+#include <streams.h>
+#include <tinyformat.h>
+#include <ui_interface.h>
+#include <utilstrencodings.h>
+#include <validationinterface.h>
+#include <wallet/crypter.h>
+#include <wallet/rpcwallet.h>
+#include <wallet/walletdb.h>
 
 #include <algorithm>
 #include <atomic>
@@ -206,13 +204,6 @@ public:
         Init();
     }
 
-    /**
-     * Helper conversion operator to allow passing CMerkleTx where CTransaction
-     * is expected.
-     * TODO: adapt callers and remove this operator.
-     */
-    operator const CTransaction &() const { return *tx; }
-
     void Init() {
         hashBlock = uint256();
         nIndex = -1;
@@ -276,6 +267,31 @@ private:
     const CWallet *pwallet;
 
 public:
+    /**
+     * Key/value map with information about the transaction.
+     *
+     * The following keys can be read and written through the map and are
+     * serialized in the wallet database:
+     *
+     *     "comment", "to"   - comment strings provided to sendtoaddress,
+     *                         sendfrom, sendmany wallet RPCs
+     *     "replaces_txid"   - txid (as HexStr) of transaction replaced by
+     *                         bumpfee on transaction created by bumpfee
+     *     "replaced_by_txid" - txid (as HexStr) of transaction created by
+     *                         bumpfee on transaction replaced by bumpfee
+     *     "from", "message" - obsolete fields that could be set in UI prior to
+     *                         2011 (removed in commit 4d9b223)
+     *
+     * The following keys are serialized in the wallet database, but shouldn't
+     * be read or written through the map (they will be temporarily added and
+     * removed from the map during serialization):
+     *
+     *     "fromaccount"     - serialized strFromAccount value
+     *     "n"               - serialized nOrderPos value
+     *     "timesmart"       - serialized nTimeSmart value
+     *     "spent"           - serialized vfSpent value that existed prior to
+     *                         2014 (removed in commit 93a18a3)
+     */
     mapValue_t mapValue;
     std::vector<std::pair<std::string, std::string>> vOrderForm;
     unsigned int fTimeReceivedIsTxTime;
@@ -358,45 +374,40 @@ public:
         nOrderPos = -1;
     }
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        if (ser_action.ForRead()) {
-            Init(nullptr);
-        }
-
+    template <typename Stream> void Serialize(Stream &s) const {
         char fSpent = false;
+        mapValue_t mapValueCopy = mapValue;
 
-        if (!ser_action.ForRead()) {
-            mapValue["fromaccount"] = strFromAccount;
-            WriteOrderPos(nOrderPos, mapValue);
-            if (nTimeSmart) {
-                mapValue["timesmart"] = strprintf("%u", nTimeSmart);
-            }
+        mapValueCopy["fromaccount"] = strFromAccount;
+        WriteOrderPos(nOrderPos, mapValueCopy);
+        if (nTimeSmart) {
+            mapValueCopy["timesmart"] = strprintf("%u", nTimeSmart);
         }
 
-        READWRITE(*static_cast<CMerkleTx *>(this));
+        s << static_cast<const CMerkleTx &>(*this);
         //!< Used to be vtxPrev
         std::vector<CMerkleTx> vUnused;
-        READWRITE(vUnused);
-        READWRITE(mapValue);
-        READWRITE(vOrderForm);
-        READWRITE(fTimeReceivedIsTxTime);
-        READWRITE(nTimeReceived);
-        READWRITE(fFromMe);
-        READWRITE(fSpent);
+        s << vUnused << mapValueCopy << vOrderForm << fTimeReceivedIsTxTime
+          << nTimeReceived << fFromMe << fSpent;
+    }
 
-        if (ser_action.ForRead()) {
-            strFromAccount = mapValue["fromaccount"];
-            ReadOrderPos(nOrderPos, mapValue);
-            nTimeSmart = mapValue.count("timesmart")
-                             ? (unsigned int)atoi64(mapValue["timesmart"])
-                             : 0;
-        }
+    template <typename Stream> void Unserialize(Stream &s) {
+        Init(nullptr);
+        char fSpent;
+
+        s >> static_cast<CMerkleTx &>(*this);
+        //!< Used to be vtxPrev
+        std::vector<CMerkleTx> vUnused;
+        s >> vUnused >> mapValue >> vOrderForm >> fTimeReceivedIsTxTime >>
+            nTimeReceived >> fFromMe >> fSpent;
+
+        strFromAccount = std::move(mapValue["fromaccount"]);
+        ReadOrderPos(nOrderPos, mapValue);
+        nTimeSmart = mapValue.count("timesmart")
+                         ? (unsigned int)atoi64(mapValue["timesmart"])
+                         : 0;
 
         mapValue.erase("fromaccount");
-        mapValue.erase("version");
         mapValue.erase("spent");
         mapValue.erase("n");
         mapValue.erase("timesmart");
@@ -575,45 +586,50 @@ public:
         nEntryNo = 0;
     }
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
+    template <typename Stream> void Serialize(Stream &s) const {
         int nVersion = s.GetVersion();
-        if (!(s.GetType() & SER_GETHASH)) READWRITE(nVersion);
-        //! Note: strAccount is serialized as part of the key, not here.
-        READWRITE(nCreditDebit);
-        READWRITE(nTime);
-        READWRITE(LIMITED_STRING(strOtherAccount, 65536));
-
-        if (!ser_action.ForRead()) {
-            WriteOrderPos(nOrderPos, mapValue);
-
-            if (!(mapValue.empty() && _ssExtra.empty())) {
-                CDataStream ss(s.GetType(), s.GetVersion());
-                ss.insert(ss.begin(), '\0');
-                ss << mapValue;
-                ss.insert(ss.end(), _ssExtra.begin(), _ssExtra.end());
-                strComment.append(ss.str());
-            }
+        if (!(s.GetType() & SER_GETHASH)) {
+            s << nVersion;
         }
+        //! Note: strAccount is serialized as part of the key, not here.
+        s << nCreditDebit << nTime << strOtherAccount;
 
-        READWRITE(LIMITED_STRING(strComment, 65536));
+        mapValue_t mapValueCopy = mapValue;
+        WriteOrderPos(nOrderPos, mapValueCopy);
+
+        std::string strCommentCopy = strComment;
+        if (!mapValueCopy.empty() || !_ssExtra.empty()) {
+            CDataStream ss(s.GetType(), s.GetVersion());
+            ss.insert(ss.begin(), '\0');
+            ss << mapValueCopy;
+            ss.insert(ss.end(), _ssExtra.begin(), _ssExtra.end());
+            strCommentCopy.append(ss.str());
+        }
+        s << strCommentCopy;
+    }
+
+    template <typename Stream> void Unserialize(Stream &s) {
+        int nVersion = s.GetVersion();
+        if (!(s.GetType() & SER_GETHASH)) {
+            s >> nVersion;
+        }
+        //! Note: strAccount is serialized as part of the key, not here.
+        s >> nCreditDebit >> nTime >> LIMITED_STRING(strOtherAccount, 65536) >>
+            LIMITED_STRING(strComment, 65536);
 
         size_t nSepPos = strComment.find("\0", 0, 1);
-        if (ser_action.ForRead()) {
-            mapValue.clear();
-            if (std::string::npos != nSepPos) {
-                CDataStream ss(
-                    std::vector<char>(strComment.begin() + nSepPos + 1,
-                                      strComment.end()),
-                    s.GetType(), s.GetVersion());
-                ss >> mapValue;
-                _ssExtra = std::vector<char>(ss.begin(), ss.end());
-            }
-            ReadOrderPos(nOrderPos, mapValue);
+        mapValue.clear();
+        if (std::string::npos != nSepPos) {
+            CDataStream ss(std::vector<char>(strComment.begin() + nSepPos + 1,
+                                             strComment.end()),
+                           s.GetType(), s.GetVersion());
+            ss >> mapValue;
+            _ssExtra = std::vector<char>(ss.begin(), ss.end());
         }
-        if (std::string::npos != nSepPos) strComment.erase(nSepPos);
+        ReadOrderPos(nOrderPos, mapValue);
+        if (std::string::npos != nSepPos) {
+            strComment.erase(nSepPos);
+        }
 
         mapValue.erase("n");
     }
@@ -622,6 +638,8 @@ private:
     std::vector<char> _ssExtra;
 };
 
+// forward declarations for ScanForWalletTransactions/RescanFromTime
+class WalletRescanReserver;
 /**
  * A CWallet is an extension of a keystore, which also maintains a set of
  * transactions and balances, and provides the ability to create new
@@ -631,7 +649,10 @@ class CWallet final : public CCryptoKeyStore, public CValidationInterface {
 private:
     static std::atomic<bool> fFlushScheduled;
     std::atomic<bool> fAbortRescan;
+    // controlled by WalletRescanReserver
     std::atomic<bool> fScanningWallet;
+    std::mutex mutexScanning;
+    friend class WalletRescanReserver;
 
     /**
      * Select a set of coins such that nValueRet >= nTargetValue and at least
@@ -965,9 +986,11 @@ public:
     bool AddToWalletIfInvolvingMe(const CTransactionRef &tx,
                                   const CBlockIndex *pIndex, int posInBlock,
                                   bool fUpdate);
-    int64_t RescanFromTime(int64_t startTime, bool update);
+    int64_t RescanFromTime(int64_t startTime,
+                           const WalletRescanReserver &reserver, bool update);
     CBlockIndex *ScanForWalletTransactions(CBlockIndex *pindexStart,
                                            CBlockIndex *pindexStop,
+                                           const WalletRescanReserver &reserver,
                                            bool fUpdate = false);
     void TransactionRemovedFromMempool(const CTransactionRef &ptx) override;
     void ReacceptWalletTransactions();
@@ -995,7 +1018,7 @@ public:
                          int &nChangePosInOut, std::string &strFailReason,
                          bool lockUnspents,
                          const std::set<int> &setSubtractFeeFromOutputs,
-                         CCoinControl coinControl, bool keepReserveKey = true);
+                         CCoinControl coinControl, bool keepReserveKey);
     bool SignTransaction(CMutableTransaction &tx);
 
     /**
@@ -1182,21 +1205,21 @@ public:
 
     /* Set the HD chain model (chain child index counters) */
     bool SetHDChain(const CHDChain &chain, bool memonly);
-    const CHDChain &GetHDChain() { return hdChain; }
+    const CHDChain &GetHDChain() const { return hdChain; }
 
     /* Returns true if HD is enabled */
-    bool IsHDEnabled();
+    bool IsHDEnabled() const;
 
     /* Generates a new HD master key (will not be activated) */
     CPubKey GenerateNewHDMasterKey();
 
     /**
      * Set the current HD master key (will reset the chain child index counters)
-     * If possibleOldChain is provided, the parameters from the old chain
-     * (version) will be preserved.
+     * Sets the master key's version based on the current wallet version (so the
+     * caller must ensure the current wallet version is correct before calling
+     *  this function).
      */
-    bool SetHDMasterKey(const CPubKey &key,
-                        CHDChain *possibleOldChain = nullptr);
+    bool SetHDMasterKey(const CPubKey &key);
 
     /**
      * Blocks until the wallet state is up-to-date to /at least/ the current
@@ -1221,6 +1244,10 @@ public:
         pwallet = pwalletIn;
         fInternal = false;
     }
+
+    CReserveKey() = default;
+    CReserveKey(const CReserveKey &) = delete;
+    CReserveKey &operator=(const CReserveKey &) = delete;
 
     ~CReserveKey() { ReturnKey(); }
 
@@ -1279,5 +1306,38 @@ bool CWallet::DummySignTx(CMutableTransaction &txNew,
 
     return true;
 }
+
+/** RAII object to check and reserve a wallet rescan */
+class WalletRescanReserver {
+private:
+    CWalletRef m_wallet;
+    bool m_could_reserve;
+
+public:
+    explicit WalletRescanReserver(CWalletRef w)
+        : m_wallet(w), m_could_reserve(false) {}
+
+    bool reserve() {
+        assert(!m_could_reserve);
+        std::lock_guard<std::mutex> lock(m_wallet->mutexScanning);
+        if (m_wallet->fScanningWallet) {
+            return false;
+        }
+        m_wallet->fScanningWallet = true;
+        m_could_reserve = true;
+        return true;
+    }
+
+    bool isReserved() const {
+        return (m_could_reserve && m_wallet->fScanningWallet);
+    }
+
+    ~WalletRescanReserver() {
+        std::lock_guard<std::mutex> lock(m_wallet->mutexScanning);
+        if (m_could_reserve) {
+            m_wallet->fScanningWallet = false;
+        }
+    }
+};
 
 #endif // BITCOIN_WALLET_WALLET_H

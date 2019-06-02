@@ -4,21 +4,20 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "rpc/server.h"
+#include <rpc/server.h>
 
-#include "base58.h"
-#include "config.h"
-#include "fs.h"
-#include "init.h"
-#include "random.h"
-#include "sync.h"
-#include "ui_interface.h"
-#include "util.h"
-#include "utilstrencodings.h"
+#include <base58.h>
+#include <config.h>
+#include <fs.h>
+#include <init.h>
+#include <random.h>
+#include <sync.h>
+#include <ui_interface.h>
+#include <util.h>
+#include <utilstrencodings.h>
 
 #include <univalue.h>
 
-#include <boost/algorithm/string/case_conv.hpp> // for to_upper()
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/bind.hpp>
@@ -232,11 +231,9 @@ std::string CRPCTable::help(Config &config, const std::string &strCommand,
     std::vector<std::pair<std::string, const ContextFreeRPCCommand *>>
         vCommands;
 
-    for (std::map<std::string, const ContextFreeRPCCommand *>::const_iterator
-             mi = mapCommands.begin();
-         mi != mapCommands.end(); ++mi) {
+    for (const auto &entry : mapCommands) {
         vCommands.push_back(
-            std::make_pair(mi->second->category + mi->first, mi->second));
+            std::make_pair(entry.second->category + entry.first, entry.second));
     }
     sort(vCommands.begin(), vCommands.end());
 
@@ -276,10 +273,7 @@ std::string CRPCTable::help(Config &config, const std::string &strCommand,
                         strRet += "\n";
                     }
                     category = pcmd->category;
-                    std::string firstLetter = category.substr(0, 1);
-                    boost::to_upper(firstLetter);
-                    strRet +=
-                        "== " + firstLetter + category.substr(1) + " ==\n";
+                    strRet += "== " + Capitalize(category) + " ==\n";
                 }
             }
             strRet += strHelp + "\n";

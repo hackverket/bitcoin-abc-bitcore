@@ -3,10 +3,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "utilstrencodings.h"
+#include <utilstrencodings.h>
 
-#include "tinyformat.h"
+#include <tinyformat.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -269,9 +270,7 @@ std::vector<uint8_t> DecodeBase64(const char *p, bool *pfInvalid) {
 
 std::string DecodeBase64(const std::string &str) {
     std::vector<uint8_t> vchRet = DecodeBase64(str.c_str());
-    return (vchRet.size() == 0)
-               ? std::string()
-               : std::string((const char *)&vchRet[0], vchRet.size());
+    return std::string((const char *)vchRet.data(), vchRet.size());
 }
 
 std::string EncodeBase32(const uint8_t *pch, size_t len) {
@@ -460,9 +459,7 @@ std::vector<uint8_t> DecodeBase32(const char *p, bool *pfInvalid) {
 
 std::string DecodeBase32(const std::string &str) {
     std::vector<uint8_t> vchRet = DecodeBase32(str.c_str());
-    return (vchRet.size() == 0)
-               ? std::string()
-               : std::string((const char *)&vchRet[0], vchRet.size());
+    return std::string((const char *)vchRet.data(), vchRet.size());
 }
 
 static bool ParsePrechecks(const std::string &str) {
@@ -802,4 +799,15 @@ bool ParseFixedPoint(const std::string &val, int decimals,
     }
 
     return true;
+}
+
+void Downcase(std::string &str) {
+    std::transform(str.begin(), str.end(), str.begin(),
+                   [](unsigned char c) { return ToLower(c); });
+}
+
+std::string Capitalize(std::string str) {
+    if (str.empty()) return str;
+    str[0] = ToUpper(str.front());
+    return str;
 }

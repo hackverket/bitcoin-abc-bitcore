@@ -3,30 +3,30 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "rpc/mining.h"
-#include "amount.h"
-#include "blockvalidity.h"
-#include "chain.h"
-#include "chainparams.h"
-#include "config.h"
-#include "consensus/consensus.h"
-#include "consensus/params.h"
-#include "consensus/validation.h"
-#include "core_io.h"
-#include "dstencode.h"
-#include "init.h"
-#include "miner.h"
-#include "net.h"
-#include "policy/policy.h"
-#include "pow.h"
-#include "rpc/blockchain.h"
-#include "rpc/server.h"
-#include "txmempool.h"
-#include "util.h"
-#include "utilstrencodings.h"
-#include "validation.h"
-#include "validationinterface.h"
-#include "warnings.h"
+#include <amount.h>
+#include <blockvalidity.h>
+#include <chain.h>
+#include <chainparams.h>
+#include <config.h>
+#include <consensus/consensus.h>
+#include <consensus/params.h>
+#include <consensus/validation.h>
+#include <core_io.h>
+#include <dstencode.h>
+#include <init.h>
+#include <miner.h>
+#include <net.h>
+#include <policy/policy.h>
+#include <pow.h>
+#include <rpc/blockchain.h>
+#include <rpc/mining.h>
+#include <rpc/server.h>
+#include <txmempool.h>
+#include <util.h>
+#include <utilstrencodings.h>
+#include <validation.h>
+#include <validationinterface.h>
+#include <warnings.h>
 
 #include <univalue.h>
 
@@ -130,7 +130,7 @@ UniValue generateBlocks(const Config &config,
 
     unsigned int nExtraNonce = 0;
     UniValue blockHashes(UniValue::VARR);
-    while (nHeight < nHeightEnd) {
+    while (nHeight < nHeightEnd && !ShutdownRequested()) {
         std::unique_ptr<CBlockTemplate> pblocktemplate(
             BlockAssembler(config, g_mempool)
                 .CreateNewBlock(coinbaseScript->reserveScript));
@@ -306,8 +306,8 @@ static UniValue prioritisetransaction(const Config &config,
     uint256 hash = ParseHashStr(request.params[0].get_str(), "txid");
     Amount nAmount = request.params[2].get_int64() * SATOSHI;
 
-    g_mempool.PrioritiseTransaction(hash, request.params[0].get_str(),
-                                    request.params[1].get_real(), nAmount);
+    g_mempool.PrioritiseTransaction(hash, request.params[1].get_real(),
+                                    nAmount);
     return true;
 }
 
@@ -480,9 +480,8 @@ static UniValue getblocktemplate(const Config &config,
             }
 
             uint256 hash = block.GetHash();
-            BlockMap::iterator mi = mapBlockIndex.find(hash);
-            if (mi != mapBlockIndex.end()) {
-                CBlockIndex *pindex = mi->second;
+            const CBlockIndex *pindex = LookupBlockIndex(hash);
+            if (pindex) {
                 if (pindex->IsValid(BlockValidity::SCRIPTS)) {
                     return "duplicate";
                 }
@@ -615,39 +614,27 @@ static UniValue getblocktemplate(const Config &config,
     aCaps.push_back("proposal");
 
     UniValue transactions(UniValue::VARR);
-    std::map<uint256, int64_t> setTxIndex;
-    int i = 0;
+    int index_in_template = 0;
     for (const auto &it : pblock->vtx) {
         const CTransaction &tx = *it;
         uint256 txId = tx.GetId();
-        setTxIndex[txId] = i++;
 
         if (tx.IsCoinBase()) {
+            index_in_template++;
             continue;
         }
 
         UniValue entry(UniValue::VOBJ);
-
         entry.pushKV("data", EncodeHexTx(tx));
         entry.pushKV("txid", txId.GetHex());
         entry.pushKV("hash", tx.GetHash().GetHex());
-
-        UniValue deps(UniValue::VARR);
-        for (const CTxIn &in : tx.vin) {
-            if (setTxIndex.count(in.prevout.GetTxId())) {
-                deps.push_back(setTxIndex[in.prevout.GetTxId()]);
-            }
-        }
-        entry.pushKV("depends", deps);
-
-        int index_in_template = i - 1;
-        entry.pushKV("fee",
-                     pblocktemplate->entries[index_in_template].fees / SATOSHI);
-        int64_t nTxSigOps =
-            pblocktemplate->entries[index_in_template].sigOpCount;
+        entry.pushKV("fee", pblocktemplate->entries[index_in_template].txFee /
+                                SATOSHI);
+        int64_t nTxSigOps = pblocktemplate->entries[index_in_template].txSigOps;
         entry.pushKV("sigops", nTxSigOps);
 
         transactions.push_back(entry);
+        index_in_template++;
     }
 
     UniValue aux(UniValue::VOBJ);
@@ -747,9 +734,8 @@ static UniValue submitblock(const Config &config,
     bool fBlockPresent = false;
     {
         LOCK(cs_main);
-        BlockMap::iterator mi = mapBlockIndex.find(hash);
-        if (mi != mapBlockIndex.end()) {
-            CBlockIndex *pindex = mi->second;
+        const CBlockIndex *pindex = LookupBlockIndex(hash);
+        if (pindex) {
             if (pindex->IsValid(BlockValidity::SCRIPTS)) {
                 return "duplicate";
             }

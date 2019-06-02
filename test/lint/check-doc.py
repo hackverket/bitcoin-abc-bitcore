@@ -30,6 +30,8 @@ SET_DOC_OPTIONAL = set(['-benchmark',
                         '-dbcrashratio',
                         '-debugnet',
                         '-forcecompactdb',
+                        # TODO remove after the Nov 2019 upgrade
+                        '-gravitonactivationtime',
                         # TODO remove after the may 2019 fork
                         '-greatwallactivationtime',
                         '-h',
@@ -43,8 +45,7 @@ SET_DOC_OPTIONAL = set(['-benchmark',
                         '-whitelistalwaysrelay'])
 
 # list false positive unknows arguments
-SET_FALSE_POSITIVE_UNKNOWNS = set(['-nodebug',
-                                   '-zmqpubhashblock',
+SET_FALSE_POSITIVE_UNKNOWNS = set(['-zmqpubhashblock',
                                    '-zmqpubhashtx',
                                    '-zmqpubrawblock',
                                    '-zmqpubrawtx'])

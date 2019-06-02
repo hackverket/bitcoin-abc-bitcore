@@ -2,18 +2,18 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "wallet/wallet.h"
+#include <chain.h>
+#include <chainparams.h>
+#include <config.h>
+#include <consensus/validation.h>
+#include <rpc/server.h>
+#include <validation.h>
+#include <wallet/coincontrol.h>
+#include <wallet/rpcdump.h>
+#include <wallet/wallet.h>
 
-#include "chainparams.h"
-#include "config.h"
-
-#include "consensus/validation.h"
-#include "rpc/server.h"
-#include "test/test_bitcoin.h"
-#include "validation.h"
-#include "wallet/coincontrol.h"
-#include "wallet/rpcdump.h"
-#include "wallet/test/wallet_test_fixture.h"
+#include <test/test_bitcoin.h>
+#include <wallet/test/wallet_test_fixture.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -116,7 +116,7 @@ BOOST_AUTO_TEST_CASE(coin_selection_tests) {
         BOOST_CHECK(!wallet.SelectCoinsMinConf(3 * CENT, 1, 6, 0, vCoins,
                                                setCoinsRet, nValueRet));
 
-        // we can make 3 cents of new  coins
+        // we can make 3 cents of new coins
         BOOST_CHECK(wallet.SelectCoinsMinConf(3 * CENT, 1, 1, 0, vCoins,
                                               setCoinsRet, nValueRet));
         BOOST_CHECK_EQUAL(nValueRet, 3 * CENT);
@@ -476,8 +476,10 @@ BOOST_FIXTURE_TEST_CASE(rescan, TestChain100Setup) {
     {
         CWallet wallet(Params());
         AddKey(wallet, coinbaseKey);
-        BOOST_CHECK_EQUAL(nullBlock,
-                          wallet.ScanForWalletTransactions(oldTip, nullptr));
+        WalletRescanReserver reserver(&wallet);
+        reserver.reserve();
+        BOOST_CHECK_EQUAL(nullBlock, wallet.ScanForWalletTransactions(
+                                         oldTip, nullptr, reserver));
         BOOST_CHECK_EQUAL(wallet.GetImmatureBalance(), 100 * COIN);
     }
 
@@ -490,8 +492,10 @@ BOOST_FIXTURE_TEST_CASE(rescan, TestChain100Setup) {
     {
         CWallet wallet(Params());
         AddKey(wallet, coinbaseKey);
-        BOOST_CHECK_EQUAL(oldTip,
-                          wallet.ScanForWalletTransactions(oldTip, nullptr));
+        WalletRescanReserver reserver(&wallet);
+        reserver.reserve();
+        BOOST_CHECK_EQUAL(oldTip, wallet.ScanForWalletTransactions(
+                                      oldTip, nullptr, reserver));
         BOOST_CHECK_EQUAL(wallet.GetImmatureBalance(), 50 * COIN);
     }
 
@@ -656,7 +660,10 @@ static int64_t AddTx(CWallet &wallet, uint32_t lockTime, int64_t mockTime,
     if (block) {
         wtx.SetMerkleBranch(block, 0);
     }
-    wallet.AddToWallet(wtx);
+    {
+        LOCK(cs_main);
+        wallet.AddToWallet(wtx);
+    }
     LOCK(wallet.cs_wallet);
     return wallet.mapWallet.at(wtx.GetId()).nTimeSmart;
 }
@@ -715,7 +722,10 @@ public:
         bool firstRun;
         wallet->LoadWallet(firstRun);
         AddKey(*wallet, coinbaseKey);
-        wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr);
+        WalletRescanReserver reserver(wallet.get());
+        reserver.reserve();
+        wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr,
+                                          reserver);
     }
 
     ~ListCoinsTestingSetup() {
