@@ -8,6 +8,7 @@ from test_framework.script import *
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
 from test_framework.util import assert_equal
+from test_framework.validaterawtransaction import check_validaterawtx
 
 def create_tx(node, undersize = False, low_fee = False, sign_tx = True):
     utxo = node.listunspent().pop()
@@ -36,17 +37,6 @@ def create_tx(node, undersize = False, low_fee = False, sign_tx = True):
 
     return tx
 
-def validate_tx(node, tx, has_valid_inputs = True, is_minable = True, enough_fee = True, num_errors = 0):
-    res = node.validaterawtransaction(ToHex(tx))
-
-    if enough_fee:
-        assert(res["txfee"] >= res["txfeeneeded"])
-    else:
-        assert(res["txfee"] <= res["txfeeneeded"])
-
-    assert_equal(res["minable"], is_minable)
-    assert_equal(res["inputscheck"]["valid"], has_valid_inputs)
-    assert_equal(num_errors, len(res["errors"]))
 
 class ValidateRawTransactionTest(BitcoinTestFramework):
 
@@ -59,17 +49,17 @@ class ValidateRawTransactionTest(BitcoinTestFramework):
         self.log.info("Test started");
         n = self.nodes[0]
         n.generate(105)
-        validate_tx(n, create_tx(n))
+        check_validaterawtx(n, create_tx(n))
 
-        validate_tx(n, create_tx(n, low_fee = True),
+        check_validaterawtx(n, create_tx(n, low_fee = True),
             enough_fee = False)
 
-        validate_tx(n, create_tx(n, sign_tx = False),
+        check_validaterawtx(n, create_tx(n, sign_tx = False),
             has_valid_inputs = False,
             is_minable = False,
             num_errors = len(["input-script-failed"]))
 
-        validate_tx(n, create_tx(n, sign_tx = False, undersize = True),
+        check_validaterawtx(n, create_tx(n, sign_tx = False, undersize = True),
             has_valid_inputs = False,
             is_minable = False,
             num_errors = len(["input-script-failed", "bad-txns-undersize"]))
