@@ -54,9 +54,7 @@ namespace {
         void parseParameters(int argc, const char *const argv[]) override {
             gArgs.ParseParameters(argc, argv);
         }
-        void readConfigFile(const std::string &conf_path) override {
-            gArgs.ReadConfigFile(conf_path);
-        }
+        void readConfigFiles() override { gArgs.ReadConfigFiles(); }
         bool softSetArg(const std::string &arg,
                         const std::string &value) override {
             return gArgs.SoftSetArg(arg, value);
@@ -73,15 +71,14 @@ namespace {
         std::string getWarnings(const std::string &type) override {
             return GetWarnings(type);
         }
-        bool baseInitialize(Config &config, RPCServer &rpcServer) override {
-            return AppInitBasicSetup() &&
-                   AppInitParameterInteraction(config, rpcServer) &&
+        bool baseInitialize(Config &config) override {
+            return AppInitBasicSetup() && AppInitParameterInteraction(config) &&
                    AppInitSanityChecks() && AppInitLockDataDirectory();
         }
         bool
-        appInitMain(Config &config,
+        appInitMain(Config &config, RPCServer &rpcServer,
                     HTTPRPCRequestProcessor &httpRPCRequestProcessor) override {
-            return AppInitMain(config, httpRPCRequestProcessor);
+            return AppInitMain(config, rpcServer, httpRPCRequestProcessor);
         }
         void appShutdown() override {
             Interrupt();
@@ -97,9 +94,7 @@ namespace {
                 StopMapPort();
             }
         }
-        std::string helpMessage(HelpMessageMode mode) override {
-            return HelpMessage(mode);
-        }
+        void setupServerArgs() override { return SetupServerArgs(); }
         bool getProxy(Network net, proxyType &proxy_info) override {
             return GetProxy(net, proxy_info);
         }

@@ -55,9 +55,8 @@ static CBlock CreateGenesisBlock(const char *pszTimestamp,
  *     CTxOut(nValue=50.00000000, scriptPubKey=0x5F1DF16B2B704C8A578D0B)
  *   vMerkleTree: 4a5e1e
  */
-static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce,
-                                 uint32_t nBits, int32_t nVersion,
-                                 const Amount genesisReward) {
+CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits,
+                          int32_t nVersion, const Amount genesisReward) {
     const char *pszTimestamp =
         "The Times 03/Jan/2009 Chancellor on brink of second bailout for banks";
     const CScript genesisOutputScript =
@@ -114,12 +113,12 @@ public:
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S(
-            "000000000000000000000000000000000000000000eafdfa9271c11ceae5513a");
+            "000000000000000000000000000000000000000000ed8fb94eee97fc15788cdc");
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
         consensus.defaultAssumeValid = uint256S(
-            "000000000000000001b4b8e36aec7d4f9671a47872cb9a74dc16ca398c7dcc18");
+            "00000000000000000007e98373dc6f69a89011192b39094cf72ff15f993bd147");
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 478558;
@@ -246,7 +245,7 @@ public:
             // UNIX timestamp of last known number of transactions.
             1522608016,
             // Total number of transactions between genesis and that timestamp
-            // (the tx=... number in the SetBestChain debug.log lines)
+            // (the tx=... number in the ChainStateFlushed debug.log lines)
             248589038,
             // Estimated number of transactions per second after that timestamp.
             3.2};
@@ -291,12 +290,12 @@ public:
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S(
-            "000000000000000000000000000000000000000000000043cb761ba833f844c5");
+            "00000000000000000000000000000000000000000000004c83317c9efa4724bd");
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
         consensus.defaultAssumeValid = uint256S(
-            "00000000000002cb911c0a756a24c2fe6c1a29acaede3569ce430b95d8ff012d");
+            "00000000000000479138892ef0e4fa478ccc938fb94df862ef5bde7e8dee23d3");
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 1155875;
@@ -371,6 +370,9 @@ public:
                 // Nov, 13. DAA activation block.
                 {1188697, uint256S("0000000000170ed0918077bde7b4d36cc4c91be69fa"
                                    "09211f748240dabe047fb")},
+                // Great wall activation.
+                {1303885, uint256S("00000000000000479138892ef0e4fa478ccc938fb94"
+                                   "df862ef5bde7e8dee23d3")},
             }};
 
         // Data as of block

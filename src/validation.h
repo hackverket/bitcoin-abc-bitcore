@@ -229,10 +229,6 @@ extern uint256 g_best_block;
 extern std::atomic_bool fImporting;
 extern std::atomic_bool fReindex;
 extern int nScriptCheckThreads;
-extern bool fTxIndex;
-extern bool fAddressIndex;
-extern bool fSpentIndex;
-extern bool fTimestampIndex;
 extern bool fIsBareMultisigStd;
 extern bool fRequireStandard;
 extern bool fCheckBlockIndex;
@@ -472,7 +468,7 @@ bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
                         bool fLimitFree, bool *pfMissingInputs,
                         bool fOverrideMempoolLimit = false,
                         const Amount nAbsurdFee = Amount::zero(),
-                        bool dryrun = false);
+                        bool test_accept = false);
 
 UniValue VerifyTransactionWithMemoryPool(const Config &config, CTxMemPool &pool,
                         CValidationState &state, const CTransactionRef &tx,
@@ -744,10 +740,6 @@ int32_t ComputeBlockVersion(const CBlockIndex *pindexPrev,
 static const unsigned int REJECT_INTERNAL = 0x100;
 /** Too high fee. Can not be triggered by P2P transactions */
 static const unsigned int REJECT_HIGHFEE = 0x100;
-/** Transaction is already known (either in mempool or blockchain) */
-static const unsigned int REJECT_ALREADY_KNOWN = 0x101;
-/** Transaction conflicts with a transaction already known */
-static const unsigned int REJECT_CONFLICT = 0x102;
 /** Block conflicts with a transaction already known */
 static const unsigned int REJECT_AGAINST_FINALIZED = 0x103;
 
@@ -759,5 +751,7 @@ bool DumpMempool();
 
 /** Load the mempool from disk. */
 bool LoadMempool(const Config &config);
+bool AbortNode(const std::string &strMessage,
+               const std::string &userMessage = "");
 
 #endif // BITCOIN_VALIDATION_H

@@ -45,7 +45,9 @@ std::vector<CWalletRef> vpwallets;
 CFeeRate payTxFee(DEFAULT_TRANSACTION_FEE);
 bool bSpendZeroConfChange = DEFAULT_SPEND_ZEROCONF_CHANGE;
 
-const char *DEFAULT_WALLET_DAT = "wallet.dat";
+OutputType g_address_type = OutputType::NONE;
+OutputType g_change_type = OutputType::NONE;
+
 const uint32_t BIP32_HARDENED_KEY_LIMIT = 0x80000000;
 
 /**
@@ -486,7 +488,7 @@ bool CWallet::ChangeWalletPassphrase(
     return false;
 }
 
-void CWallet::SetBestChain(const CBlockLocator &loc) {
+void CWallet::ChainStateFlushed(const CBlockLocator &loc) {
     CWalletDB walletdb(*dbw);
     walletdb.WriteBestBlock(loc);
 }
@@ -889,8 +891,8 @@ bool CWallet::AccountMove(std::string strFrom, std::string strTo,
     return walletdb.TxnCommit();
 }
 
-bool CWallet::GetLabelAddress(CPubKey &pubKey, const std::string &label,
-                              bool bForceNew) {
+bool CWallet::GetLabelDestination(CTxDestination &dest,
+                                  const std::string &label, bool bForceNew) {
     CWalletDB walletdb(*dbw);
 
     CAccount account;
@@ -900,9 +902,10 @@ bool CWallet::GetLabelAddress(CPubKey &pubKey, const std::string &label,
         if (!account.vchPubKey.IsValid()) {
             bForceNew = true;
         } else {
-            // Check if the current key has been used.
-            CScript scriptPubKey =
-                GetScriptForDestination(account.vchPubKey.GetID());
+            // Check if the current key has been used (TODO: check other
+            // addresses with the same key)
+            CScript scriptPubKey = GetScriptForDestination(
+                GetDestinationForKey(account.vchPubKey, g_address_type));
             for (std::map<TxId, CWalletTx>::iterator it = mapWallet.begin();
                  it != mapWallet.end() && account.vchPubKey.IsValid(); ++it) {
                 for (const CTxOut &txout : (*it).second.tx->vout) {
@@ -921,11 +924,13 @@ bool CWallet::GetLabelAddress(CPubKey &pubKey, const std::string &label,
             return false;
         }
 
-        SetAddressBook(account.vchPubKey.GetID(), label, "receive");
+        LearnRelatedScripts(account.vchPubKey, g_address_type);
+        dest = GetDestinationForKey(account.vchPubKey, g_address_type);
+        SetAddressBook(dest, label, "receive");
         walletdb.WriteAccount(label, account);
+    } else {
+        dest = GetDestinationForKey(account.vchPubKey, g_address_type);
     }
-
-    pubKey = account.vchPubKey;
 
     return true;
 }
@@ -2954,7 +2959,9 @@ bool CWallet::CreateTransaction(const std::vector<CRecipient> &vecSend,
                 return false;
             }
 
-            scriptChange = GetScriptForDestination(vchPubKey.GetID());
+            LearnRelatedScripts(vchPubKey, g_change_type);
+            scriptChange = GetScriptForDestination(
+                GetDestinationForKey(vchPubKey, g_change_type));
         }
         CTxOut change_prototype_txout(Amount::zero(), scriptChange);
         size_t change_prototype_size =
@@ -2992,7 +2999,7 @@ bool CWallet::CreateTransaction(const std::vector<CRecipient> &vecSend,
                     }
                 }
 
-                if (txout.IsDust(dustRelayFee)) {
+                if (IsDust(txout, dustRelayFee)) {
                     if (recipient.fSubtractFeeFromAmount &&
                         nFeeRet > Amount::zero()) {
                         if (txout.nValue < Amount::zero()) {
@@ -3050,8 +3057,8 @@ bool CWallet::CreateTransaction(const std::vector<CRecipient> &vecSend,
                 // purpose of the all-inclusive feature. So instead we raise the
                 // change and deduct from the recipient.
                 if (nSubtractFeeFromAmount > 0 &&
-                    newTxOut.IsDust(dustRelayFee)) {
-                    Amount nDust = newTxOut.GetDustThreshold(dustRelayFee) -
+                    IsDust(newTxOut, dustRelayFee)) {
+                    Amount nDust = GetDustThreshold(newTxOut, dustRelayFee) -
                                    newTxOut.nValue;
                     // Raise change until no more dust.
                     newTxOut.nValue += nDust;
@@ -3059,7 +3066,7 @@ bool CWallet::CreateTransaction(const std::vector<CRecipient> &vecSend,
                     for (unsigned int i = 0; i < vecSend.size(); i++) {
                         if (vecSend[i].fSubtractFeeFromAmount) {
                             txNew.vout[i].nValue -= nDust;
-                            if (txNew.vout[i].IsDust(dustRelayFee)) {
+                            if (IsDust(txNew.vout[i], dustRelayFee)) {
                                 strFailReason =
                                     _("The transaction amount is too small "
                                       "to send after the fee has been "
@@ -3074,7 +3081,7 @@ bool CWallet::CreateTransaction(const std::vector<CRecipient> &vecSend,
 
                 // Never create dust outputs; if we would, just add the dust to
                 // the fee.
-                if (newTxOut.IsDust(dustRelayFee)) {
+                if (IsDust(newTxOut, dustRelayFee)) {
                     nChangePosInOut = -1;
                     nFeeRet += nChange;
                 } else {
@@ -3150,7 +3157,7 @@ bool CWallet::CreateTransaction(const std::vector<CRecipient> &vecSend,
                 Amount fee_needed_for_change = GetMinimumFee(
                     change_prototype_size, g_mempool, coinControl);
                 Amount minimum_value_for_change =
-                    change_prototype_txout.GetDustThreshold(dustRelayFee);
+                    GetDustThreshold(change_prototype_txout, dustRelayFee);
                 Amount max_excess_fee =
                     fee_needed_for_change + minimum_value_for_change;
                 if (nFeeRet > nFeeNeeded + max_excess_fee &&
@@ -3951,6 +3958,7 @@ void CWallet::MarkReserveKeysAsUsed(int64_t keypool_id) {
             // TODO: This should be unnecessary
             m_pool_key_to_index.erase(keypool.vchPubKey.GetID());
         }
+        LearnAllRelatedScripts(keypool.vchPubKey);
         walletdb.ErasePool(index);
         it = setKeyPool->erase(it);
     }
@@ -4197,17 +4205,18 @@ CWallet::GetDestValues(const std::string &prefix) const {
 }
 
 CWallet *CWallet::CreateWalletFromFile(const CChainParams &chainParams,
-                                       const std::string walletFile) {
+                                       const std::string &name,
+                                       const fs::path &path) {
+    const std::string &walletFile = name;
+
     // Needed to restore wallet transaction meta data after -zapwallettxes
     std::vector<CWalletTx> vWtx;
 
     if (gArgs.GetBoolArg("-zapwallettxes", false)) {
         uiInterface.InitMessage(_("Zapping all transactions from wallet..."));
 
-        std::unique_ptr<CWalletDBWrapper> dbw(
-            new CWalletDBWrapper(&bitdb, walletFile));
-        std::unique_ptr<CWallet> tempWallet =
-            std::make_unique<CWallet>(chainParams, std::move(dbw));
+        std::unique_ptr<CWallet> tempWallet = std::make_unique<CWallet>(
+            chainParams, name, CWalletDBWrapper::Create(path));
         DBErrors nZapWalletRet = tempWallet->ZapWalletTx(vWtx);
         if (nZapWalletRet != DBErrors::LOAD_OK) {
             InitError(
@@ -4220,9 +4229,8 @@ CWallet *CWallet::CreateWalletFromFile(const CChainParams &chainParams,
 
     int64_t nStart = GetTimeMillis();
     bool fFirstRun = true;
-    std::unique_ptr<CWalletDBWrapper> dbw(
-        new CWalletDBWrapper(&bitdb, walletFile));
-    CWallet *walletInstance = new CWallet(chainParams, std::move(dbw));
+    CWallet *walletInstance =
+        new CWallet(chainParams, name, CWalletDBWrapper::Create(path));
     DBErrors nLoadWalletRet = walletInstance->LoadWallet(fFirstRun);
     if (nLoadWalletRet != DBErrors::LOAD_OK) {
         if (nLoadWalletRet == DBErrors::CORRUPT) {
@@ -4274,20 +4282,21 @@ CWallet *CWallet::CreateWalletFromFile(const CChainParams &chainParams,
     }
 
     if (fFirstRun) {
-        // Create new keyUser and set as default key.
-        if (gArgs.GetBoolArg("-usehd", DEFAULT_USE_HD_WALLET) &&
-            !walletInstance->IsHDEnabled()) {
+        // Ensure this wallet.dat can only be opened by clients supporting
+        // HD with chain split and expects no default key.
+        if (!gArgs.GetBoolArg("-usehd", true)) {
+            InitError(strprintf(_("Error creating %s: You can't create non-HD "
+                                  "wallets with this version."),
+                                walletFile));
+            return nullptr;
+        }
+        walletInstance->SetMinVersion(FEATURE_NO_DEFAULT_KEY);
 
-            // Ensure this wallet.dat can only be opened by clients supporting
-            // HD with chain split.
-            walletInstance->SetMinVersion(FEATURE_HD_SPLIT);
-
-            // Generate a new master key.
-            CPubKey masterPubKey = walletInstance->GenerateNewHDMasterKey();
-            if (!walletInstance->SetHDMasterKey(masterPubKey)) {
-                throw std::runtime_error(std::string(__func__) +
-                                         ": Storing master key failed");
-            }
+        // Generate a new master key.
+        CPubKey masterPubKey = walletInstance->GenerateNewHDMasterKey();
+        if (!walletInstance->SetHDMasterKey(masterPubKey)) {
+            throw std::runtime_error(std::string(__func__) +
+                                     ": Storing master key failed");
         }
 
         // Top up the keypool
@@ -4296,18 +4305,19 @@ CWallet *CWallet::CreateWalletFromFile(const CChainParams &chainParams,
             return nullptr;
         }
 
-        walletInstance->SetBestChain(chainActive.GetLocator());
+        walletInstance->ChainStateFlushed(chainActive.GetLocator());
     } else if (gArgs.IsArgSet("-usehd")) {
-        bool useHD = gArgs.GetBoolArg("-usehd", DEFAULT_USE_HD_WALLET);
+        bool useHD = gArgs.GetBoolArg("-usehd", true);
         if (walletInstance->IsHDEnabled() && !useHD) {
-            InitError(strprintf(_("Error loading %s: You can't disable HD on a "
-                                  "already existing HD wallet"),
-                                walletFile));
+            InitError(
+                strprintf(_("Error loading %s: You can't disable HD on an "
+                            "already existing HD wallet"),
+                          walletFile));
             return nullptr;
         }
 
         if (!walletInstance->IsHDEnabled() && useHD) {
-            InitError(strprintf(_("Error loading %s: You can't enable HD on a "
+            InitError(strprintf(_("Error loading %s: You can't enable HD on an "
                                   "already existing non-HD wallet"),
                                 walletFile));
             return nullptr;
@@ -4335,8 +4345,8 @@ CWallet *CWallet::CreateWalletFromFile(const CChainParams &chainParams,
 
     if (chainActive.Tip() && chainActive.Tip() != pindexRescan) {
         // We can't rescan beyond non-pruned blocks, stop and throw an error.
-        // This might happen if a user uses a old wallet within a pruned node or
-        // if he ran -disablewallet for a longer time, then decided to
+        // This might happen if a user uses an old wallet within a pruned node
+        // or if he ran -disablewallet for a longer time, then decided to
         // re-enable.
         if (fPruneMode) {
             CBlockIndex *block = chainActive.Tip();
@@ -4378,7 +4388,7 @@ CWallet *CWallet::CreateWalletFromFile(const CChainParams &chainParams,
                                                       reserver, true);
         }
         LogPrintf(" rescan      %15dms\n", GetTimeMillis() - nStart);
-        walletInstance->SetBestChain(chainActive.GetLocator());
+        walletInstance->ChainStateFlushed(chainActive.GetLocator());
         walletInstance->dbw->IncrementUpdateCounter();
 
         // Restore wallet transaction metadata after -zapwallettxes=1
@@ -4508,4 +4518,57 @@ bool CWalletTx::AcceptToMemoryPool(const Amount nAbsurdFee,
         nAbsurdFee);
     fInMempool = ret;
     return ret;
+}
+
+static const std::string OUTPUT_TYPE_STRING_LEGACY = "legacy";
+
+OutputType ParseOutputType(const std::string &type, OutputType default_type) {
+    if (type.empty()) {
+        return default_type;
+    } else if (type == OUTPUT_TYPE_STRING_LEGACY) {
+        return OutputType::LEGACY;
+    } else {
+        return OutputType::NONE;
+    }
+}
+
+const std::string &FormatOutputType(OutputType type) {
+    switch (type) {
+        case OutputType::LEGACY:
+            return OUTPUT_TYPE_STRING_LEGACY;
+        default:
+            assert(false);
+    }
+}
+
+void CWallet::LearnRelatedScripts(const CPubKey &key, OutputType type) {
+    // Nothing to do...
+}
+
+void CWallet::LearnAllRelatedScripts(const CPubKey &key) {
+    // Nothing to do...
+}
+
+CTxDestination GetDestinationForKey(const CPubKey &key, OutputType type) {
+    switch (type) {
+        case OutputType::LEGACY:
+            return key.GetID();
+        default:
+            assert(false);
+    }
+}
+
+std::vector<CTxDestination> GetAllDestinationsForKey(const CPubKey &key) {
+    return std::vector<CTxDestination>{key.GetID()};
+}
+
+CTxDestination CWallet::AddAndGetDestinationForScript(const CScript &script,
+                                                      OutputType type) {
+    // Note that scripts over 520 bytes are not yet supported.
+    switch (type) {
+        case OutputType::LEGACY:
+            return CScriptID(script);
+        default:
+            assert(false);
+    }
 }

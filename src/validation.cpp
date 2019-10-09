@@ -20,6 +20,10 @@
 #include <consensus/validation.h>
 #include <fs.h>
 #include <hash.h>
+#include <index/addressindex.h>
+#include <index/spentindex.h>
+#include <index/timestampindex.h>
+#include <index/txindex.h>
 #include <init.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
@@ -181,10 +185,6 @@ uint256 g_best_block;
 int nScriptCheckThreads = 0;
 std::atomic_bool fImporting(false);
 std::atomic_bool fReindex(false);
-bool fTxIndex = false;
-bool fAddressIndex = false;
-bool fTimestampIndex = false;
-bool fSpentIndex = false;
 bool fHavePruned = false;
 bool fPruneMode = false;
 bool fIsBareMultisigStd = DEFAULT_PERMIT_BAREMULTISIG;
@@ -427,11 +427,10 @@ static bool IsReplayProtectionEnabledForCurrentBlock(const Config &config) {
 
 // Used to avoid mempool polluting consensus critical paths if CCoinsViewMempool
 // were somehow broken and returning the wrong scriptPubKeys
-static bool
-CheckInputsFromMempoolAndCache(const CTransaction &tx, CValidationState &state,
-                               const CCoinsViewCache &view, CTxMemPool &pool,
-                               const uint32_t flags, bool cacheSigStore,
-                               PrecomputedTransactionData &txdata) {
+static bool CheckInputsFromMempoolAndCache(
+    const CTransaction &tx, CValidationState &state,
+    const CCoinsViewCache &view, const CTxMemPool &pool, const uint32_t flags,
+    bool cacheSigStore, PrecomputedTransactionData &txdata) {
     AssertLockHeld(cs_main);
 
     // pool.cs should be locked already, but go ahead and re-take the lock here
@@ -483,8 +482,6 @@ static UniValue ValidateTransaction(
     bool futureMinable = true;
     bool standard = true;
 
-    // std::vector<std::string> errorList;
-    // errorList.reserve(256);
     UniValue errorList(UniValue::VARR);
 
     // mempool "read lock" (held through
@@ -500,7 +497,6 @@ static UniValue ValidateTransaction(
         errorList.push_back("Coinbase is only valid in a block, not as a loose transaction");
         minable = false;
         futureMinable = false;
-        // return false;
     }
 
     // Rather not work on nonstandard transactions (unless -testnet/-regtest)
@@ -528,8 +524,6 @@ static UniValue ValidateTransaction(
 
     // Is it already in the memory pool?
     if (pool.exists(txid)) {
-        // return state.Invalid(false, REJECT_ALREADY_KNOWN,
-        //                     "txn-already-in-mempool");
         errorList.push_back("txn-already-in-mempool");
     }
 
@@ -538,9 +532,6 @@ static UniValue ValidateTransaction(
     for (const CTxIn &txin : tx.vin) {
         auto itConflicting = pool.mapNextTx.find(txin.prevout);
         if (itConflicting != pool.mapNextTx.end()) {
-            // Disable replacement feature for good
-            // return state.Invalid(false, REJECT_CONFLICT,
-            //                     "txn-mempool-conflict");
             minable = false;
             futureMinable = false;
             txnMempoolConflict = true;
@@ -573,9 +564,6 @@ static UniValue ValidateTransaction(
                     // Optimistically just do efficient check of cache for
                     // outputs.
                     if (pcoinsTip->HaveCoinInCache(COutPoint(txid, out))) {
-                        // return state.Invalid(false, REJECT_DUPLICATE,
-                        //                     "txn-already-known");
-                        // errorList.push_back("txn-already-known");
                         txnAlreadyKnown = true;
                     }
                 }
@@ -588,11 +576,9 @@ static UniValue ValidateTransaction(
 
                 // fMissingInputs and !state.IsInvalid() is used to detect this
                 // condition, don't set state.Invalid()
-                // return false;
                 minable = false;
                 futureMinable = false;
                 errorList.push_back("input-does-not-exist: " + txin.prevout.GetTxId().ToString() + ":" + std::to_string(txin.prevout.GetN()));
-                // errorList.push_back("inputs-does-not-exist");
             }
         }
         if (txnAlreadyKnown) {
@@ -638,8 +624,6 @@ static UniValue ValidateTransaction(
 
 		// Check for non-standard pay-to-script-hash in inputs
 		if (fRequireStandard && !AreInputsStandard(tx, view)) {
-		    // return state.Invalid(false, REJECT_NONSTANDARD,
-		    //                     "bad-txns-nonstandard-inputs");
 		    errorList.push_back("bad-txns-nonstandard-inputs");
 		    standard = false;
 		}
@@ -695,9 +679,6 @@ static UniValue ValidateTransaction(
 		        .GetFee(nSize);
 		if (mempoolRejectFee > Amount::zero() &&
 		    nModifiedFees < mempoolRejectFee) {
-		    // return state.DoS(0, false, REJECT_INSUFFICIENTFEE,
-		    //                 "mempool min fee not met", false,
-		    //                 strprintf("%d < %d", nFees, mempoolRejectFee));
 		    errorList.push_back("mempool min fee not met");
 		    standard = false;
 		}
@@ -711,9 +692,6 @@ static UniValue ValidateTransaction(
 		    !AllowFree(entry.GetPriority(chainActive.Height() + 1))) {
 		    // Require that free transactions have sufficient priority to be
 		    // mined in the next block.
-		    // return state.DoS(0, false, REJECT_INSUFFICIENTFEE,
-		    //                 "insufficient priority");
-                    // minRelayTxFee.GetFee(nSize)
 		    errorList.push_back("insufficient-priority");
 		    errorList.push_back("insufficient-fee: need " + minRelayTxFee.GetFee(nSize).ToString() + " was only " + nModifiedFees.ToString());
 		    errorList.push_back("minimum-fee: " + minRelayTxFee.GetFee(nSize).ToString());
@@ -743,8 +721,6 @@ static UniValue ValidateTransaction(
 		    if (dFreeCount + nSize >=
 		        gArgs.GetArg("-limitfreerelay", DEFAULT_LIMITFREERELAY) * 10 *
 		            1000) {
-		        // return state.DoS(0, false, REJECT_INSUFFICIENTFEE,
-		        //                 "rate limited free transaction");
 		        errorList.push_back("rate limited free transaction");
 		        standard = false;
 		    }
@@ -755,8 +731,6 @@ static UniValue ValidateTransaction(
 		}
 
 		if (nAbsurdFee != Amount::zero() && nFees > nAbsurdFee) {
-		    // return state.Invalid(false, REJECT_HIGHFEE, "absurdly-high-fee",
-		    //                     strprintf("%d > %d", nFees, nAbsurdFee));
 		    errorList.push_back("absurdly-high-fee");
 		    standard = false;
 		}
@@ -778,8 +752,6 @@ static UniValue ValidateTransaction(
 		if (!pool.CalculateMemPoolAncestors(
 		        entry, setAncestors, nLimitAncestors, nLimitAncestorSize,
 		        nLimitDescendants, nLimitDescendantSize, errString)) {
-		    // return state.DoS(0, false, REJECT_NONSTANDARD,
-		    //                 "too-long-mempool-chain", false, errString);
 		    errorList.push_back("too-long-mempool-chain");
 		    minable = false;
 		    // futureMinable should be true here
@@ -792,7 +764,7 @@ static UniValue ValidateTransaction(
 		}
 
 		if (IsMagneticAnomalyEnabledForCurrentBlock(config)) {
-		    extraFlags |= SCRIPT_ENABLE_CHECKDATASIG;
+		    extraFlags |= SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
 		}
 
         if (IsGreatWallEnabledForCurrentBlock(config)) {
@@ -802,33 +774,20 @@ static UniValue ValidateTransaction(
             extraFlags |= SCRIPT_ENABLE_SCHNORR;
         }
 
-		// Check inputs based on the set of flags we activate.
-		uint32_t scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
-		if (!config.GetChainParams().RequireStandard()) {
-		    scriptVerifyFlags =
-		        SCRIPT_ENABLE_SIGHASH_FORKID |
-		        gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
-		}
-
-		// Make sure whatever we need to activate is actually activated.
-		scriptVerifyFlags |= extraFlags;
+        const uint32_t scriptVerifyFlags =
+            STANDARD_SCRIPT_VERIFY_FLAGS | extraFlags;
 
 		// Check against previous transactions. This is done last to help
 		// prevent CPU exhaustion denial-of-service attacks.
 		PrecomputedTransactionData txdata(tx);
-		// if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false,
-		//                 txdata)) {
-		    // State filled in by CheckInputs.
-		    // return false;
-		//}
-                UniValue inputsCheckResult = CheckInputsBetter(tx, state, view,
-                                                      true, scriptVerifyFlags, true, false, txdata);
-                transactionAssessment.pushKV("inputscheck", inputsCheckResult);
-                if (inputsCheckResult["valid"].isFalse()) {
-                    errorList.push_back("input-script-failed");
-		    minable = false;
-		    futureMinable = false;
-                }
+        UniValue inputsCheckResult = CheckInputsBetter(tx, state, view,
+                true, scriptVerifyFlags, true, false, txdata);
+        transactionAssessment.pushKV("inputscheck", inputsCheckResult);
+        if (inputsCheckResult["valid"].isFalse()) {
+            errorList.push_back("input-script-failed");
+            minable = false;
+            futureMinable = false;
+        }
 
 		// Check again against the current block tip's script verification flags
 		// to cache our script execution flags. This is, of course, useless if
@@ -848,44 +807,19 @@ static UniValue ValidateTransaction(
 		uint32_t currentBlockScriptVerifyFlags =
 		    GetBlockScriptFlags(config, chainActive.Tip());
 
-		if (inputsCheckResult["valid"].isTrue() && !CheckInputsFromMempoolAndCache(tx, state, view, pool,
-		                                    currentBlockScriptVerifyFlags, true,
-		                                    txdata)) {
-		    // If we're using promiscuousmempoolflags, we may hit this normally.
-		    // Check if current block has some flags that scriptVerifyFlags does
-		    // not before printing an ominous warning.
-		    if (!(~scriptVerifyFlags & currentBlockScriptVerifyFlags)) {
-		        // return error(
-		        //    "%s: BUG! PLEASE REPORT THIS! ConnectInputs failed against "
-		        //    "MANDATORY but not STANDARD flags %s, %s",
-		        //    __func__, txid.ToString(), FormatStateMessage(state));
-		        errorList.push_back("%s: BUG! PLEASE REPORT THIS! ConnectInputs failed against MANDATORY but not STANDARD flags %s, %s");
-		        minable = false;
-		        futureMinable = false;
-		    }
-
-		    if (!CheckInputs(tx, state, view, true,
-		                     MANDATORY_SCRIPT_VERIFY_FLAGS | extraFlags, true,
-		                     false, txdata)) {
-		        // return error(
-		        //    "%s: ConnectInputs failed against MANDATORY but not "
-		        //    "STANDARD flags due to promiscuous mempool %s, %s",
-		        //    __func__, txid.ToString(), FormatStateMessage(state));
-		        errorList.push_back("%s: ConnectInputs failed against MANDATORY but not STANDARD flags due to promiscuous mempool %s, %s");
-		        minable = false;
-		        futureMinable = false;
-		    }
-
-		    LogPrintf("Warning: -promiscuousmempool flags set to not include "
-		              "currently enforced soft forks, this may break mining or "
-		              "otherwise cause instability!\n");
+		if (inputsCheckResult["valid"].isTrue()
+            && !CheckInputsFromMempoolAndCache(tx, state, view, pool,
+                                               currentBlockScriptVerifyFlags, true,
+                                               txdata)) {
+            errorList.push_back("%s: BUG! PLEASE REPORT THIS! ConnectInputs failed against MANDATORY but not STANDARD flags %s, %s");
+            minable = false;
+            futureMinable = false;
         }
-		}
+        }
     }
     transactionAssessment.pushKV("minable", minable);
     transactionAssessment.pushKV("futureMinable", futureMinable);
     transactionAssessment.pushKV("standard", standard);
-//    errorList.shrink_to_fit();
     transactionAssessment.pushKV("errors", errorList);
 
     return transactionAssessment;
@@ -895,7 +829,7 @@ static bool AcceptToMemoryPoolWorker(
     const Config &config, CTxMemPool &pool, CValidationState &state,
     const CTransactionRef &ptx, bool fLimitFree, bool *pfMissingInputs,
     int64_t nAcceptTime, bool fOverrideMempoolLimit, const Amount nAbsurdFee,
-    std::vector<COutPoint> &coins_to_uncache, bool dryrun = false) {
+    std::vector<COutPoint> &coins_to_uncache, bool test_accept) {
     AssertLockHeld(cs_main);
 
     const CTransaction &tx = *ptx;
@@ -937,8 +871,7 @@ static bool AcceptToMemoryPoolWorker(
 
     // Is it already in the memory pool?
     if (pool.exists(txid)) {
-        return state.Invalid(false, REJECT_ALREADY_KNOWN,
-                             "txn-already-in-mempool");
+        return state.Invalid(false, REJECT_DUPLICATE, "txn-already-in-mempool");
     }
 
     // Check for conflicts with in-memory transactions
@@ -946,7 +879,7 @@ static bool AcceptToMemoryPoolWorker(
         auto itConflicting = pool.mapNextTx.find(txin.prevout);
         if (itConflicting != pool.mapNextTx.end()) {
             // Disable replacement feature for good
-            return state.Invalid(false, REJECT_CONFLICT,
+            return state.Invalid(false, REJECT_DUPLICATE,
                                  "txn-mempool-conflict");
         }
     }
@@ -1019,8 +952,8 @@ static bool AcceptToMemoryPoolWorker(
                                  "bad-txns-nonstandard-inputs");
         }
 
-        int64_t nSigOpsCount = GetTransactionSigOpCount(
-            tx, view, STANDARD_CHECKDATASIG_VERIFY_FLAGS);
+        int64_t nSigOpsCount =
+            GetTransactionSigOpCount(tx, view, STANDARD_SCRIPT_VERIFY_FLAGS);
 
         Amount nValueOut = tx.GetValueOut();
         Amount nFees = nValueIn - nValueOut;
@@ -1136,10 +1069,8 @@ static bool AcceptToMemoryPoolWorker(
         if (!pool.CalculateMemPoolAncestors(
                 entry, setAncestors, nLimitAncestors, nLimitAncestorSize,
                 nLimitDescendants, nLimitDescendantSize, errString)) {
-            if (!dryrun) {
-                return state.DoS(0, false, REJECT_NONSTANDARD,
-                             "too-long-mempool-chain", false, errString);
-            }
+            return state.DoS(0, false, REJECT_NONSTANDARD,
+                         "too-long-mempool-chain", false, errString);
         }
 
         // Set extraFlags as a set of flags that needs to be activated.
@@ -1149,7 +1080,7 @@ static bool AcceptToMemoryPoolWorker(
         }
 
         if (IsMagneticAnomalyEnabledForCurrentBlock(config)) {
-            extraFlags |= SCRIPT_ENABLE_CHECKDATASIG;
+            extraFlags |= SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
         }
 
         if (IsGreatWallEnabledForCurrentBlock(config)) {
@@ -1159,16 +1090,9 @@ static bool AcceptToMemoryPoolWorker(
             extraFlags |= SCRIPT_ENABLE_SCHNORR;
         }
 
-        // Check inputs based on the set of flags we activate.
-        uint32_t scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
-        if (!config.GetChainParams().RequireStandard()) {
-            scriptVerifyFlags =
-                SCRIPT_ENABLE_SIGHASH_FORKID |
-                gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
-        }
-
         // Make sure whatever we need to activate is actually activated.
-        scriptVerifyFlags |= extraFlags;
+        const uint32_t scriptVerifyFlags =
+            STANDARD_SCRIPT_VERIFY_FLAGS | extraFlags;
 
         // Check against previous transactions. This is done last to help
         // prevent CPU exhaustion denial-of-service attacks.
@@ -1200,31 +1124,13 @@ static bool AcceptToMemoryPoolWorker(
         if (!CheckInputsFromMempoolAndCache(tx, state, view, pool,
                                             currentBlockScriptVerifyFlags, true,
                                             txdata)) {
-            // If we're using promiscuousmempoolflags, we may hit this normally.
-            // Check if current block has some flags that scriptVerifyFlags does
-            // not before printing an ominous warning.
-            if (!(~scriptVerifyFlags & currentBlockScriptVerifyFlags)) {
-                return error(
-                    "%s: BUG! PLEASE REPORT THIS! ConnectInputs failed against "
-                    "MANDATORY but not STANDARD flags %s, %s",
-                    __func__, txid.ToString(), FormatStateMessage(state));
-            }
-
-            if (!CheckInputs(tx, state, view, true,
-                             MANDATORY_SCRIPT_VERIFY_FLAGS | extraFlags, true,
-                             false, txdata)) {
-                return error(
-                    "%s: ConnectInputs failed against MANDATORY but not "
-                    "STANDARD flags due to promiscuous mempool %s, %s",
-                    __func__, txid.ToString(), FormatStateMessage(state));
-            }
-
-            LogPrintf("Warning: -promiscuousmempool flags set to not include "
-                      "currently enforced soft forks, this may break mining or "
-                      "otherwise cause instability!\n");
+            return error("%s: BUG! PLEASE REPORT THIS! CheckInputs failed "
+                         "against latest-block but not STANDARD flags %s, %s",
+                         __func__, txid.ToString(), FormatStateMessage(state));
         }
 
-        if (dryrun) {
+        if (test_accept) {
+            // Tx was accepted, but not added
             return true;
         }
 
@@ -1232,12 +1138,12 @@ static bool AcceptToMemoryPoolWorker(
         pool.addUnchecked(txid, entry, setAncestors);
 
         // Add memory address index
-        if (fAddressIndex) {
+        if (g_addressindex) {
             pool.addAddressIndex(entry, view);
         }
 
         // Add memory spent index
-        if (fSpentIndex) {
+        if (g_spentindex) {
             pool.addSpentIndex(entry, view);
         }
 
@@ -1260,15 +1166,16 @@ static bool AcceptToMemoryPoolWorker(
 /**
  * (try to) add transaction to memory pool with a specified acceptance time.
  */
-static bool AcceptToMemoryPoolWithTime(
-    const Config &config, CTxMemPool &pool, CValidationState &state,
-    const CTransactionRef &tx, bool fLimitFree, bool *pfMissingInputs,
-    int64_t nAcceptTime, bool fOverrideMempoolLimit = false,
-    const Amount nAbsurdFee = Amount::zero(), bool dryrun = false) {
+static bool
+AcceptToMemoryPoolWithTime(const Config &config, CTxMemPool &pool,
+                           CValidationState &state, const CTransactionRef &tx,
+                           bool fLimitFree, bool *pfMissingInputs,
+                           int64_t nAcceptTime, bool fOverrideMempoolLimit,
+                           const Amount nAbsurdFee, bool test_accept) {
     std::vector<COutPoint> coins_to_uncache;
     bool res = AcceptToMemoryPoolWorker(
         config, pool, state, tx, fLimitFree, pfMissingInputs, nAcceptTime,
-        fOverrideMempoolLimit, nAbsurdFee, coins_to_uncache, dryrun);
+        fOverrideMempoolLimit, nAbsurdFee, coins_to_uncache, test_accept);
     if (!res) {
         for (const COutPoint &outpoint : coins_to_uncache) {
             pcoinsTip->Uncache(outpoint);
@@ -1284,14 +1191,18 @@ static bool AcceptToMemoryPoolWithTime(
 }
 
 static UniValue VerifyTransactionWithMemoryPoolWithTime(
-    const Config &config, CTxMemPool &pool, CValidationState &state,
-    const CTransactionRef &tx, bool fLimitFree, bool *pfMissingInputs,
-    int64_t nAcceptTime, bool fOverrideMempoolLimit = false,
-    const Amount nAbsurdFee = Amount::zero()) {
+		const Config &config, CTxMemPool &pool,
+		CValidationState &state, const CTransactionRef &tx,
+		bool fLimitFree, bool *pfMissingInputs,
+		int64_t nAcceptTime, bool fOverrideMempoolLimit = false,
+		const Amount nAbsurdFee = Amount::zero())
+{
     std::vector<COutPoint> coins_to_uncache;
     UniValue res = ValidateTransaction(
-        config, pool, state, tx, fLimitFree, pfMissingInputs, nAcceptTime,
-        fOverrideMempoolLimit, nAbsurdFee, coins_to_uncache);
+        config, pool, state, tx, fLimitFree,
+		pfMissingInputs, nAcceptTime, fOverrideMempoolLimit,
+		nAbsurdFee, coins_to_uncache);
+
     if (res["minable"].isFalse()) {
         for (const COutPoint &outpoint : coins_to_uncache) {
             pcoinsTip->Uncache(outpoint);
@@ -1308,42 +1219,55 @@ static UniValue VerifyTransactionWithMemoryPoolWithTime(
 bool AcceptToMemoryPool(const Config &config, CTxMemPool &pool,
                         CValidationState &state, const CTransactionRef &tx,
                         bool fLimitFree, bool *pfMissingInputs,
-                        bool fOverrideMempoolLimit, const Amount nAbsurdFee, bool dryrun) {
-    return AcceptToMemoryPoolWithTime(config, pool, state, tx, fLimitFree,
-                                      pfMissingInputs, GetTime(),
-                                      fOverrideMempoolLimit, nAbsurdFee, dryrun);
+                        bool fOverrideMempoolLimit, const Amount nAbsurdFee,
+                        bool test_accept) {
+    return AcceptToMemoryPoolWithTime(
+        config, pool, state, tx, fLimitFree, pfMissingInputs, GetTime(),
+        fOverrideMempoolLimit, nAbsurdFee, test_accept);
 }
 
-UniValue VerifyTransactionWithMemoryPool(const Config &config, CTxMemPool &pool,
-                        CValidationState &state, const CTransactionRef &tx,
-                        bool fLimitFree, bool *pfMissingInputs,
-                        bool fOverrideMempoolLimit, const Amount nAbsurdFee) {
-    return VerifyTransactionWithMemoryPoolWithTime(config, pool, state, tx, fLimitFree,
-                                      pfMissingInputs, GetTime(),
-                                      fOverrideMempoolLimit, nAbsurdFee);
+UniValue VerifyTransactionWithMemoryPool(
+	const Config &config, CTxMemPool &pool,
+	CValidationState &state, const CTransactionRef &tx,
+	bool fLimitFree, bool *pfMissingInputs,
+	bool fOverrideMempoolLimit, const Amount nAbsurdFee)
+{
+    return VerifyTransactionWithMemoryPoolWithTime(
+		config, pool, state, tx, fLimitFree,
+		pfMissingInputs, GetTime(),
+		fOverrideMempoolLimit, nAbsurdFee);
 }
 
 bool GetTimestampIndex(const unsigned int &high, const unsigned int &low, const bool fActiveOnly, std::vector<std::pair<uint256, unsigned int> > &hashes)
 {
-    if (!fTimestampIndex)
+    if (!g_timestampindex) {
         return error("Timestamp index not enabled");
+    }
 
-    if (!pblocktree->ReadTimestampIndex(high, low, fActiveOnly, hashes))
+    if (!g_timestampindex->BlockUntilSyncedToCurrentChain()) {
+        return error("Timestamp index is not ready");
+    }
+
+    if (!g_timestampindex->GetTimestampIndex(high, low, fActiveOnly, hashes)) {
         return error("Unable to get hashes for timestamps");
+    }
 
     return true;
 }
 
 bool GetSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value)
 {
-    if (!fSpentIndex)
-        return false;
+    if (!g_spentindex) {
+        return error("Spent index not enabled");
+    }
 
-    if (g_mempool.getSpentIndex(key, value))
+    if (g_mempool.getSpentIndex(key, value)) {
         return true;
+    }
 
-    if (!pblocktree->ReadSpentIndex(key, value))
+    if (!g_spentindex->ReadSpentIndex(key, value)) {
         return false;
+    }
 
     return true;
 }
@@ -1362,10 +1286,11 @@ bool HashOnchainActive(const uint256 &hash)
 bool GetAddressIndex(uint160 addressHash, int type,
                      std::vector<std::pair<CAddressIndexKey, CAmount> > &addressIndex, int start, int end)
 {
-    if (!fAddressIndex)
+    if (!g_addressindex) {
         return error("address index not enabled");
+    }
 
-    if (!pblocktree->ReadAddressIndex(addressHash, type, addressIndex, start, end))
+    if (!g_addressindex->ReadAddressIndex(addressHash, type, addressIndex, start, end))
         return error("unable to get txids for address");
 
     return true;
@@ -1374,10 +1299,10 @@ bool GetAddressIndex(uint160 addressHash, int type,
 bool GetAddressUnspent(uint160 addressHash, int type,
                        std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > &unspentOutputs)
 {
-    if (!fAddressIndex)
+    if (!g_addressindex)
         return error("address index not enabled");
 
-    if (!pblocktree->ReadAddressUnspentIndex(addressHash, type, unspentOutputs))
+    if (!g_addressindex->ReadAddressUnspentIndex(addressHash, type, unspentOutputs))
         return error("unable to get txids for address");
 
     return true;
@@ -1406,32 +1331,8 @@ bool GetTransaction(const Config &config, const TxId &txid,
             return true;
         }
 
-        if (fTxIndex) {
-            CDiskTxPos postx;
-            if (pblocktree->ReadTxIndex(txid, postx)) {
-                CAutoFile file(OpenBlockFile(postx, true), SER_DISK,
-                               CLIENT_VERSION);
-                if (file.IsNull()) {
-                    return error("%s: OpenBlockFile failed", __func__);
-                }
-                CBlockHeader header;
-                try {
-                    file >> header;
-                    fseek(file.Get(), postx.nTxOffset, SEEK_CUR);
-                    file >> txOut;
-                } catch (const std::exception &e) {
-                    return error("%s: Deserialize or I/O error - %s", __func__,
-                                 e.what());
-                }
-                hashBlock = header.GetHash();
-                if (txOut->GetId() != txid) {
-                    return error("%s: txid mismatch", __func__);
-                }
-                return true;
-            }
-
-            // transaction not found in index, nothing more can be done
-            return false;
+        if (g_txindex) {
+            return g_txindex->FindTx(txid, hashBlock, txOut);
         }
 
         // use coin database to locate block that contains transaction, and scan
@@ -2076,10 +1977,11 @@ static bool UndoReadFromDisk(CBlockUndo &blockundo, const CBlockIndex *pindex) {
 
     return true;
 }
+} // ns anon
 
 /** Abort with a message */
 bool AbortNode(const std::string &strMessage,
-               const std::string &userMessage = "") {
+               const std::string &userMessage) {
     SetMiscWarning(strMessage);
     LogPrintf("*** %s\n", strMessage);
     uiInterface.ThreadSafeMessageBox(
@@ -2091,9 +1993,11 @@ bool AbortNode(const std::string &strMessage,
     return false;
 }
 
+namespace {
+
 bool AbortNode(CValidationState &state, const std::string &strMessage,
                const std::string &userMessage = "") {
-    AbortNode(strMessage, userMessage);
+    ::AbortNode(strMessage, userMessage);
     return state.Error(strMessage);
 }
 
@@ -2163,14 +2067,9 @@ DisconnectResult ApplyBlockUndo(const CBlockUndo &blockUndo,
         return DISCONNECT_FAILED;
     }
 
-    std::vector<std::pair<CAddressIndexKey, CAmount> > addressIndex;
-    std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > addressUnspentIndex;
-    std::vector<std::pair<CSpentIndexKey, CSpentIndexValue> > spentIndex;
-
     // First, restore inputs.
     for (size_t i = 1; i < block.vtx.size(); i++) {
         const CTransaction &tx = *(block.vtx[i]);
-        uint256 txid = tx.GetId();
 
         const CTxUndo &txundo = blockUndo.vtxundo[i - 1];
         if (txundo.vprevout.size() != tx.vin.size()) {
@@ -2187,82 +2086,28 @@ DisconnectResult ApplyBlockUndo(const CBlockUndo &blockUndo,
             }
             fClean = fClean && res != DISCONNECT_UNCLEAN;
 
-            const CTxIn input = tx.vin[j];
-
-            if (fSpentIndex) {
-                // undo and delete the spent index
-                spentIndex.push_back(std::make_pair(CSpentIndexKey(input.prevout.GetTxId(), input.prevout.GetN()), CSpentIndexValue()));
+            if (g_spentindex) {
+                g_spentindex->UndoCoinSpend(tx.vin[j]);
             }
-
-            if (fAddressIndex) {
-                const CTxOut &prevout = view.GetOutputFor(tx.vin[j]);
-                if (prevout.scriptPubKey.IsPayToScriptHash()) {
-                    std::vector<unsigned char> hashBytes(prevout.scriptPubKey.begin()+2, prevout.scriptPubKey.begin()+22);
-
-                    // undo spending activity
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(2, uint160(hashBytes), pindex->nHeight, i, txid, j, true), prevout.nValue / SATOSHI * -1));
-
-                    // restore unspent index
-                    // WARNING: UndoCoinSpend NOW RETURNS A COIN INSTEAD OF A CTxInUndo (UNDO.nHeight NO LONGER EXITS, NOW IT'S GETHEIGHT)
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(2, uint160(hashBytes), input.prevout.GetTxId(), input.prevout.GetN()), CAddressUnspentValue(prevout.nValue / SATOSHI, prevout.scriptPubKey, undo.GetHeight())));
-
-
-                } else if (prevout.scriptPubKey.IsPayToPublicKeyHash()) {
-                    std::vector<unsigned char> hashBytes(prevout.scriptPubKey.begin()+3, prevout.scriptPubKey.begin()+23);
-
-                    // undo spending activity
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(1, uint160(hashBytes), pindex->nHeight, i, txid, j, true), prevout.nValue / SATOSHI * -1));
-
-                    // restore unspent index
-                    // WARNING: UndoCoinSpend NOW RETURNS A COIN INSTEAD OF A CTxInUndo (UNDO.nHeight NO LONGER EXITS, NOW IT'S GETHEIGHT)
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(1, uint160(hashBytes), input.prevout.GetTxId(), input.prevout.GetN()), CAddressUnspentValue(prevout.nValue / SATOSHI, prevout.scriptPubKey, undo.GetHeight())));
-
-                } else {
-                    continue;
-                }
+            if (g_addressindex) {
+                g_addressindex->UndoCoinSpend(j, i, tx, undo, pindex, view);
             }
-
         }
     }
 
     // Second, revert created outputs.
-    size_t i = 0;
+	size_t i = 0;
     for (const auto &ptx : block.vtx) {
         const CTransaction &tx = *ptx;
         const TxId &txid = tx.GetId();
         const bool is_coinbase = tx.IsCoinBase();
 
-        if (fAddressIndex) {
-
-            for (unsigned int k = tx.vout.size(); k-- > 0;) {
-                const CTxOut &out = tx.vout[k];
-
-                if (out.scriptPubKey.IsPayToScriptHash()) {
-                    std::vector<unsigned char> hashBytes(out.scriptPubKey.begin()+2, out.scriptPubKey.begin()+22);
-
-                    // undo receiving activity
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(2, uint160(hashBytes), pindex->nHeight, i, txid, k, false), out.nValue / SATOSHI));
-
-                    // undo unspent index
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(2, uint160(hashBytes), txid, k), CAddressUnspentValue()));
-
-                } else if (out.scriptPubKey.IsPayToPublicKeyHash()) {
-                    std::vector<unsigned char> hashBytes(out.scriptPubKey.begin()+3, out.scriptPubKey.begin()+23);
-
-                    // undo receiving activity
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(1, uint160(hashBytes), pindex->nHeight, i, txid, k, false), out.nValue / SATOSHI));
-
-                    // undo unspent index
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(1, uint160(hashBytes), txid, k), CAddressUnspentValue()));
-
-                } else {
-                    continue;
-                }
-
-            }
-
-        }
-        ++i;
+		if (g_addressindex) {
+			for (size_t k = tx.vout.size(); k-- > 0;) {
+				g_addressindex->UndoCoinAdd(k, i, tx, pindex);
+			}
+		}
+		++i;
 
         // Check that all outputs are available and match the outputs in the
         // block itself exactly.
@@ -2283,24 +2128,22 @@ DisconnectResult ApplyBlockUndo(const CBlockUndo &blockUndo,
         }
     }
 
+    if (!fJustCheck && g_addressindex) {
+        if (!g_addressindex->WriteChanges()) {
+            fClean = false;
+        }
+    }
+	if (!fJustCheck && g_spentindex) {
+		if (!g_spentindex->WriteChanges()) {
+			fClean = false;
+		}
+	}
+
     // Move best block pointer to previous block.
     view.SetBestBlock(block.hashPrevBlock);
 
         //ApplyBlockUndo do not have the state parameter
     CValidationState state;
-
-    if (!fJustCheck && fAddressIndex) {
-        if (!pblocktree->EraseAddressIndex(addressIndex)) {
-            //return AbortNode(state, "Failed to delete address index");
-            AbortNode(state, "Failed to delete address index\n");
-            fClean = false;
-        }
-        if (!pblocktree->UpdateAddressUnspentIndex(addressUnspentIndex)) {
-            //return AbortNode(state, "Failed to write address unspent index");
-            AbortNode(state, "Failed to write address unspent index\n");
-            fClean = false;
-        }
-    }
 
     return fClean ? DISCONNECT_OK : DISCONNECT_UNCLEAN;
 }
@@ -2352,27 +2195,6 @@ static bool WriteUndoDataForBlock(const CBlockUndo &blockundo,
         pindex->nUndoPos = _pos.nPos;
         pindex->nStatus = pindex->nStatus.withUndo();
         setDirtyBlockIndex.insert(pindex);
-    }
-
-    return true;
-}
-
-static bool WriteTxIndexDataForBlock(const CBlock &block,
-                                     CValidationState &state,
-                                     CBlockIndex *pindex) {
-    CDiskTxPos pos(pindex->GetBlockPos(),
-                   GetSizeOfCompactSize(block.vtx.size()));
-    std::vector<std::pair<uint256, CDiskTxPos>> vPos;
-    vPos.reserve(block.vtx.size());
-    for (const CTransactionRef &tx : block.vtx) {
-        vPos.push_back(std::make_pair(tx->GetHash(), pos));
-        pos.nTxOffset += ::GetSerializeSize(*tx, SER_DISK, CLIENT_VERSION);
-    }
-
-    if (fTxIndex) {
-        if (!pblocktree->WriteTxIndex(vPos)) {
-            return AbortNode(state, "Failed to write transaction index");
-        }
     }
 
     return true;
@@ -2440,7 +2262,7 @@ static uint32_t GetBlockScriptFlags(const Config &config,
     // alternative. We also start enforcing push only signatures and
     // clean stack.
     if (IsMagneticAnomalyEnabled(config, pChainTip)) {
-        flags |= SCRIPT_ENABLE_CHECKDATASIG;
+        flags |= SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
         flags |= SCRIPT_VERIFY_SIGPUSHONLY;
         flags |= SCRIPT_VERIFY_CLEANSTACK;
     }
@@ -2640,10 +2462,6 @@ bool CChainState::ConnectBlock(const Config &config, const CBlock &block,
 
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
 
-    std::vector<std::pair<CAddressIndexKey, CAmount> > addressIndex;
-    std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> > addressUnspentIndex;
-    std::vector<std::pair<CSpentIndexKey, CSpentIndexValue> > spentIndex;
-
     size_t i = 0;
     for (const auto &ptx : block.vtx) {
         const CTransaction &tx = *ptx;
@@ -2661,33 +2479,8 @@ bool CChainState::ConnectBlock(const Config &config, const CBlock &block,
         // In both cases, we get a more meaningful feedback out of it.
         AddCoins(view, tx, pindex->nHeight, true);
 
-        if (fAddressIndex) {
-            const uint256 txhash = tx.GetHash();
-            for (unsigned int k = 0; k < tx.vout.size(); k++) {
-                const CTxOut &out = tx.vout[k];
-
-                if (out.scriptPubKey.IsPayToScriptHash()) {
-                    std::vector<unsigned char> hashBytes(out.scriptPubKey.begin()+2, out.scriptPubKey.begin()+22);
-
-                    // record receiving activity
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(2, uint160(hashBytes), pindex->nHeight, i, txhash, k, false), out.nValue / SATOSHI));
-
-                    // record unspent output
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(2, uint160(hashBytes), txhash, k), CAddressUnspentValue(out.nValue / SATOSHI, out.scriptPubKey, pindex->nHeight)));
-
-                } else if (out.scriptPubKey.IsPayToPublicKeyHash()) {
-                    std::vector<unsigned char> hashBytes(out.scriptPubKey.begin()+3, out.scriptPubKey.begin()+23);
-
-                    // record receiving activity
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(1, uint160(hashBytes), pindex->nHeight, i, txhash, k, false), out.nValue / SATOSHI));
-
-                    // record unspent output
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(1, uint160(hashBytes), txhash, k), CAddressUnspentValue(out.nValue / SATOSHI, out.scriptPubKey, pindex->nHeight)));
-
-                } else {
-                    continue;
-                }
-            }
+        if (g_addressindex) {
+            g_addressindex->AddCoins(i, tx, pindex, view);
         }
         ++i;
     }
@@ -2695,7 +2488,6 @@ bool CChainState::ConnectBlock(const Config &config, const CBlock &block,
     i = 0;
     for (const auto &ptx : block.vtx) {
         const CTransaction &tx = *ptx;
-        const uint256 txhash = tx.GetHash();
 
         if (tx.IsCoinBase()) {
             ++i;
@@ -2720,42 +2512,6 @@ bool CChainState::ConnectBlock(const Config &config, const CBlock &block,
                 100,
                 error("%s: contains a non-BIP68-final transaction", __func__),
                 REJECT_INVALID, "bad-txns-nonfinal");
-        }
-
-        if (fAddressIndex || fSpentIndex)
-        {
-            for (size_t j = 0; j < tx.vin.size(); j++) {
-
-                const CTxIn input = tx.vin[j];
-                const CTxOut &prevout = view.GetOutputFor(tx.vin[j]);
-                uint160 hashBytes;
-                int addressType;
-
-                if (prevout.scriptPubKey.IsPayToScriptHash()) {
-                    hashBytes = uint160(std::vector <unsigned char>(prevout.scriptPubKey.begin()+2, prevout.scriptPubKey.begin()+22));
-                    addressType = 2;
-                } else if (prevout.scriptPubKey.IsPayToPublicKeyHash()) {
-                    hashBytes = uint160(std::vector <unsigned char>(prevout.scriptPubKey.begin()+3, prevout.scriptPubKey.begin()+23));
-                    addressType = 1;
-                } else {
-                    hashBytes.SetNull();
-                    addressType = 0;
-                }
-
-                if (fAddressIndex && addressType > 0) {
-                    // record spending activity
-                    addressIndex.push_back(std::make_pair(CAddressIndexKey(addressType, hashBytes, pindex->nHeight, i, txhash, j, true), prevout.nValue / SATOSHI * -1));
-
-                    // remove address from unspent index
-                    addressUnspentIndex.push_back(std::make_pair(CAddressUnspentKey(addressType, hashBytes, input.prevout.GetTxId(), input.prevout.GetN()), CAddressUnspentValue()));
-                }
-
-                if (fSpentIndex) {
-                    // add the spent index to determine the txid and input that spent an output
-                    // and to find the amount and address from an input
-                    spentIndex.push_back(std::make_pair(CSpentIndexKey(input.prevout.GetTxId(), input.prevout.GetN()), CSpentIndexValue(txhash, j, pindex->nHeight, prevout.nValue / SATOSHI, addressType, hashBytes)));
-                }
-            }
         }
 
         // GetTransactionSigOpCount counts 2 types of sigops:
@@ -2788,10 +2544,27 @@ bool CChainState::ConnectBlock(const Config &config, const CBlock &block,
         }
 
         control.Add(vChecks);
-
         blockundo.vtxundo.push_back(CTxUndo());
+
+        if (g_addressindex) {
+            g_addressindex->SpendCoins(i, tx, pindex, view);
+        }
+		if (g_spentindex) {
+			g_spentindex->SpendCoins(i, tx, pindex, view);
+		}
         SpendCoins(view, tx, blockundo.vtxundo.back(), pindex->nHeight);
-        ++i;
+		++i;
+    }
+
+    if (g_addressindex) {
+        if (!g_addressindex->WriteChanges()) {
+            LogPrintf("Warning: Writing to address index failed!");
+        }
+    }
+    if (g_spentindex) {
+        if (!g_spentindex->WriteChanges()) {
+            LogPrintf("Warning: Writing to address index failed!");
+        }
     }
 
     int64_t nTime3 = GetTimeMicros();
@@ -2842,45 +2615,6 @@ bool CChainState::ConnectBlock(const Config &config, const CBlock &block,
         setDirtyBlockIndex.insert(pindex);
     }
 
-    if (!WriteTxIndexDataForBlock(block, state, pindex)) {
-        return false;
-    }
-
-    if (fAddressIndex) {
-        if (!pblocktree->WriteAddressIndex(addressIndex)) {
-            return AbortNode(state, "Failed to write address index");
-        }
-
-        if (!pblocktree->UpdateAddressUnspentIndex(addressUnspentIndex)) {
-            return AbortNode(state, "Failed to write address unspent index");
-        }
-    }
-
-    if (fSpentIndex)
-        if (!pblocktree->UpdateSpentIndex(spentIndex))
-            return AbortNode(state, "Failed to write transaction index");
-
-    if (fTimestampIndex) {
-        unsigned int logicalTS = pindex->nTime;
-        unsigned int prevLogicalTS = 0;
-
-        // retrieve logical timestamp of the previous block
-        if (pindex->pprev)
-            if (!pblocktree->ReadTimestampBlockIndex(pindex->pprev->GetBlockHash(), prevLogicalTS))
-                LogPrintf("%s: Failed to read previous block's logical timestamp\n", __func__);
-
-        if (logicalTS <= prevLogicalTS) {
-            logicalTS = prevLogicalTS + 1;
-            LogPrintf("%s: Previous logical timestamp is newer Actual[%d] prevLogical[%d] Logical[%d]\n", __func__, pindex->nTime, prevLogicalTS, logicalTS);
-        }
-
-        if (!pblocktree->WriteTimestampIndex(CTimestampIndexKey(logicalTS, pindex->GetBlockHash())))
-            return AbortNode(state, "Failed to write timestamp index");
-
-        if (!pblocktree->WriteTimestampBlockIndex(CTimestampBlockIndexKey(pindex->GetBlockHash()), CTimestampBlockIndexValue(logicalTS)))
-            return AbortNode(state, "Failed to write blockhash index");
-    }
-
     assert(pindex->phashBlock);
     // add this block to the view's block chain
     view.SetBestBlock(pindex->GetBlockHash());
@@ -2913,13 +2647,12 @@ static bool FlushStateToDisk(const CChainParams &chainparams,
     LOCK(cs_main);
     static int64_t nLastWrite = 0;
     static int64_t nLastFlush = 0;
-    static int64_t nLastSetChain = 0;
     std::set<int> setFilesToPrune;
-    bool fFlushForPrune = false;
-    bool fDoFullFlush = false;
-    int64_t nNow = 0;
+    bool full_flush_completed = false;
     try {
         {
+            bool fFlushForPrune = false;
+            bool fDoFullFlush = false;
             LOCK(cs_LastBlockFile);
             if (fPruneMode && (fCheckForPruning || nManualPruneHeight > 0) &&
                 !fReindex) {
@@ -2938,16 +2671,13 @@ static bool FlushStateToDisk(const CChainParams &chainparams,
                     }
                 }
             }
-            nNow = GetTimeMicros();
+            int64_t nNow = GetTimeMicros();
             // Avoid writing/flushing immediately after startup.
             if (nLastWrite == 0) {
                 nLastWrite = nNow;
             }
             if (nLastFlush == 0) {
                 nLastFlush = nNow;
-            }
-            if (nLastSetChain == 0) {
-                nLastSetChain = nNow;
             }
             int64_t nMempoolSizeMax =
                 gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
@@ -3038,17 +2768,13 @@ static bool FlushStateToDisk(const CChainParams &chainparams,
                     return AbortNode(state, "Failed to write to coin database");
                 }
                 nLastFlush = nNow;
+                full_flush_completed = true;
             }
         }
 
-        if (fDoFullFlush ||
-            ((mode == FlushStateMode::ALWAYS ||
-              mode == FlushStateMode::PERIODIC) &&
-             nNow >
-                 nLastSetChain + (int64_t)DATABASE_WRITE_INTERVAL * 1000000)) {
+        if (full_flush_completed) {
             // Update best block in wallet (so we can detect restored wallets).
-            GetMainSignals().SetBestChain(chainActive.GetLocator());
-            nLastSetChain = nNow;
+            GetMainSignals().ChainStateFlushed(chainActive.GetLocator());
         }
     } catch (const std::runtime_error &e) {
         return AbortNode(state, std::string("System error while flushing: ") +
@@ -5441,22 +5167,6 @@ bool static LoadBlockIndexDB(const Config &config) {
         fReindex = true;
     }
 
-    // Check whether we have a transaction index
-    pblocktree->ReadFlag("txindex", fTxIndex);
-    LogPrintf("%s: transaction index %s\n", __func__,
-              fTxIndex ? "enabled" : "disabled");
-
-    // Check whether we have an address index
-    pblocktree->ReadFlag("addressindex", fAddressIndex);
-    LogPrintf("%s: address index %s\n", __func__, fAddressIndex ? "enabled" : "disabled");
-
-    // Check whether we have a timestamp index
-    pblocktree->ReadFlag("timestampindex", fTimestampIndex);
-    LogPrintf("%s: timestamp index %s\n", __func__, fTimestampIndex ? "enabled" : "disabled");
-
-    // Check whether we have a spent index
-    pblocktree->ReadFlag("spentindex", fSpentIndex);
-    LogPrintf("%s: spent index %s\n", __func__, fSpentIndex ? "enabled" : "disabled");
     return true;
 }
 
@@ -5919,25 +5629,16 @@ bool LoadBlockIndex(const Config &config) {
         // needs_init.
 
         LogPrintf("Initializing databases...\n");
-        // Use the provided setting for -txindex in the new database
-        fTxIndex = gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX);
-        pblocktree->WriteFlag("txindex", fTxIndex);
-        LogPrintf("%s: transaction index %s\n", __func__, fTxIndex ? "enabled" : "disabled");
 
         // Use the provided setting for -addressindex in the new database
-        fAddressIndex = gArgs.GetBoolArg("-addressindex", DEFAULT_ADDRESSINDEX);
+        bool fAddressIndex = gArgs.GetBoolArg("-addressindex", DEFAULT_ADDRESSINDEX);
         pblocktree->WriteFlag("addressindex", fAddressIndex);
-        LogPrintf("%s: address index %s\n", __func__, fAddressIndex ? "enabled" : "disabled");
-
-        // Use the provided setting for -timestampindex in the new database
-        fTimestampIndex = gArgs.GetBoolArg("-timestampindex", DEFAULT_TIMESTAMPINDEX);
-        pblocktree->WriteFlag("timestampindex", fTimestampIndex);
-        LogPrintf("%s: timestamp index %s\n", __func__, fTimestampIndex ? "enabled" : "disabled");
+        LogPrintf("%s: [non-parallel] address index %s\n", __func__, fAddressIndex ? "enabled" : "disabled");
 
         // Use the provided setting for -spentindex in the new database
-        fSpentIndex = gArgs.GetBoolArg("-spentindex", DEFAULT_SPENTINDEX);
+        bool fSpentIndex = gArgs.GetBoolArg("-spentindex", DEFAULT_SPENTINDEX);
         pblocktree->WriteFlag("spentindex", fSpentIndex);
-        LogPrintf("%s: spent index %s\n", __func__, fSpentIndex ? "enabled" : "disabled");
+        LogPrintf("%s: [non-parallel] spent index %s\n", __func__, fSpentIndex ? "enabled" : "disabled");
     }
     return true;
 }
@@ -5953,8 +5654,6 @@ bool CChainState::LoadGenesisBlock(const CChainParams &chainparams) {
         return true;
     }
 
-    // Only add the genesis block if not reindexing (in which case we reuse the
-    // one already on disk)
     try {
         CBlock &block = const_cast<CBlock &>(chainparams.GenesisBlock());
         CDiskBlockPos blockPos =
@@ -6516,8 +6215,11 @@ bool LoadMempool(const Config &config) {
             CValidationState state;
             if (nTime + nExpiryTimeout > nNow) {
                 LOCK(cs_main);
-                AcceptToMemoryPoolWithTime(config, g_mempool, state, tx, true,
-                                           nullptr, nTime);
+                AcceptToMemoryPoolWithTime(
+                    config, g_mempool, state, tx, true /* fLimitFree */,
+                    nullptr /* pfMissingInputs */, nTime,
+                    false /* fOverrideMempoolLimit */,
+                    Amount::zero() /* nAbsurdFee */, false /* test_accept */);
                 if (state.IsValid()) {
                     ++count;
                 } else {

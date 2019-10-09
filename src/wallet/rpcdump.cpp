@@ -151,12 +151,18 @@ UniValue importprivkey(const Config &config, const JSONRPCRequest &request) {
         CKeyID vchAddress = pubkey.GetID();
         {
             pwallet->MarkDirty();
-            pwallet->SetAddressBook(vchAddress, strLabel, "receive");
+            // We don't know which corresponding address will be used; label
+            // them all
+            for (const auto &dest : GetAllDestinationsForKey(pubkey)) {
+                pwallet->SetAddressBook(dest, strLabel, "receive");
+            }
 
             // Don't throw error in case a key is already there
             if (pwallet->HaveKey(vchAddress)) {
                 return NullUniValue;
             }
+
+            pwallet->LearnAllRelatedScripts(pubkey);
 
             // whenever a key is imported, we need to scan the whole chain
             pwallet->UpdateTimeFirstKey(1);
@@ -285,7 +291,7 @@ UniValue importaddress(const Config &config, const JSONRPCRequest &request) {
                            "\"myscript\", \"testing\", false"));
     }
 
-    std::string strLabel = "";
+    std::string strLabel;
     if (!request.params[1].isNull()) {
         strLabel = request.params[1].get_str();
     }
@@ -504,7 +510,7 @@ UniValue importpubkey(const Config &config, const JSONRPCRequest &request) {
             HelpExampleRpc("importpubkey", "\"mypubkey\", \"testing\", false"));
     }
 
-    std::string strLabel = "";
+    std::string strLabel;
     if (!request.params[1].isNull()) {
         strLabel = request.params[1].get_str();
     }
@@ -541,8 +547,11 @@ UniValue importpubkey(const Config &config, const JSONRPCRequest &request) {
     {
         LOCK2(cs_main, pwallet->cs_wallet);
 
-        ImportAddress(pwallet, pubKey.GetID(), strLabel);
+        for (const auto &dest : GetAllDestinationsForKey(pubKey)) {
+            ImportAddress(pwallet, dest, strLabel);
+        }
         ImportScript(pwallet, GetScriptForRawPubKey(pubKey), strLabel, false);
+        pwallet->LearnAllRelatedScripts(pubKey);
     }
     if (fRescan) {
         pwallet->RescanFromTime(TIMESTAMP_MIN, reserver, true /* update */);
@@ -733,12 +742,12 @@ UniValue dumpprivkey(const Config &config, const JSONRPCRequest &request) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
                            "Invalid Bitcoin address");
     }
-    const CKeyID *keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
+    auto keyid = GetKeyForDestination(*pwallet, dest);
+    if (keyid.IsNull()) {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to a key");
     }
     CKey vchSecret;
-    if (!pwallet->GetKey(*keyID, vchSecret)) {
+    if (!pwallet->GetKey(keyid, vchSecret)) {
         throw JSONRPCError(RPC_WALLET_ERROR, "Private key for address " +
                                                  strAddress + " is not known");
     }
@@ -1313,7 +1322,7 @@ UniValue importmulti(const Config &config, const JSONRPCRequest &mainRequest) {
             "      \"redeemscript\": \"<script>\"                            , (string, optional) Allowed only if the scriptPubKey is a P2SH address or a P2SH scriptPubKey\n"
             "      \"pubkeys\": [\"<pubKey>\", ... ]                         , (array, optional) Array of strings giving pubkeys that must occur in the output or redeemscript\n"
             "      \"keys\": [\"<key>\", ... ]                               , (array, optional) Array of strings giving private keys whose corresponding public keys must occur in the output or redeemscript\n"
-            "      \"internal\": <true>                                    , (boolean, optional, default: false) Stating whether matching outputs should be be treated as not incoming payments\n"
+            "      \"internal\": <true>                                    , (boolean, optional, default: false) Stating whether matching outputs should be treated as not incoming payments\n"
             "      \"watchonly\": <true>                                   , (boolean, optional, default: false) Stating whether matching outputs should be considered watched even when they're not spendable, only allowed if keys are empty\n"
             "      \"label\": <label>                                      , (string, optional, default: '') Label to assign to the address (aka account name, for now), only allowed with internal=false\n"
             "    }\n"
@@ -1470,10 +1479,6 @@ static const ContextFreeRPCCommand commands[] = {
 // clang-format on
 
 void RegisterDumpRPCCommands(CRPCTable &t) {
-    if (gArgs.GetBoolArg("-disablewallet", false)) {
-        return;
-    }
-
     for (unsigned int vcidx = 0; vcidx < ARRAYLEN(commands); vcidx++) {
         t.appendCommand(commands[vcidx].name, &commands[vcidx]);
     }

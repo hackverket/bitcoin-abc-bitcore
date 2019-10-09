@@ -4,6 +4,7 @@
 
 #include <test/test_bitcoin.h>
 
+#include <chain.h>
 #include <chainparams.h>
 #include <config.h>
 #include <consensus/consensus.h>
@@ -112,7 +113,7 @@ TestingSetup::TestingSetup(const std::string &chainName)
     pcoinsdbview.reset(new CCoinsViewDB(1 << 23, true));
     pcoinsTip.reset(new CCoinsViewCache(pcoinsdbview.get()));
     if (!LoadGenesisBlock(chainparams)) {
-        throw std::runtime_error("InitBlockIndex failed.");
+        throw std::runtime_error("LoadGenesisBlock failed.");
     }
     {
         CValidationState state;

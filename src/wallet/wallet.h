@@ -13,6 +13,7 @@
 #include <streams.h>
 #include <tinyformat.h>
 #include <ui_interface.h>
+#include <util.h>
 #include <utilstrencodings.h>
 #include <validationinterface.h>
 #include <wallet/crypter.h>
@@ -57,10 +58,6 @@ static const bool DEFAULT_WALLET_REJECT_LONG_CHAINS = false;
 static const unsigned int MAX_FREE_TRANSACTION_CREATE_SIZE = 1000;
 static const bool DEFAULT_WALLETBROADCAST = true;
 static const bool DEFAULT_DISABLE_WALLET = false;
-//! if set, all keys will be derived by using BIP32
-static const bool DEFAULT_USE_HD_WALLET = true;
-
-extern const char *DEFAULT_WALLET_DAT;
 
 static const int64_t TIMESTAMP_MIN = 0;
 
@@ -91,9 +88,22 @@ enum WalletFeature {
     // Wallet with HD chain split (change outputs will use m/0'/1'/k)
     FEATURE_HD_SPLIT = 160300,
 
+    // Wallet without a default key written
+    FEATURE_NO_DEFAULT_KEY = 190700,
+
     // HD is optional, use FEATURE_COMPRPUBKEY as latest version
     FEATURE_LATEST = FEATURE_COMPRPUBKEY,
 };
+
+enum class OutputType {
+    NONE,
+    LEGACY,
+
+    DEFAULT = LEGACY,
+};
+
+extern OutputType g_address_type;
+extern OutputType g_change_type;
 
 /** A key pool entry */
 class CKeyPool {
@@ -729,6 +739,14 @@ private:
      */
     bool AddWatchOnly(const CScript &dest) override;
 
+    /**
+     * Wallet filename from wallet=<path> command line or config option.
+     * Used in debug logs and to send RPCs to the right wallet instance when
+     * more than one wallet is loaded.
+     */
+    std::string m_name;
+
+    /** Internal database handle. */
     std::unique_ptr<CWalletDBWrapper> dbw;
 
     /**
@@ -760,13 +778,7 @@ public:
     /**
      * Get a name for this wallet for logging/debugging purposes.
      */
-    std::string GetName() const {
-        if (dbw) {
-            return dbw->GetName();
-        } else {
-            return "dummy";
-        }
-    }
+    std::string GetName() const { return m_name; }
 
     void LoadKeyPool(int64_t nIndex, const CKeyPool &keypool);
 
@@ -780,16 +792,11 @@ public:
     MasterKeyMap mapMasterKeys;
     unsigned int nMasterKeyMaxID;
 
-    // Create wallet with dummy database handle
-    explicit CWallet(const CChainParams &chainParamsIn)
-        : dbw(new CWalletDBWrapper()), chainParams(chainParamsIn) {
-        SetNull();
-    }
-
-    // Create wallet with passed-in database handle
-    CWallet(const CChainParams &chainParamsIn,
+    /** Construct wallet with specified name and database implementation. */
+    CWallet(const CChainParams &chainParamsIn, std::string name,
             std::unique_ptr<CWalletDBWrapper> dbw_in)
-        : dbw(std::move(dbw_in)), chainParams(chainParamsIn) {
+        : m_name(std::move(name)), dbw(std::move(dbw_in)),
+          chainParams(chainParamsIn) {
         SetNull();
     }
 
@@ -970,8 +977,8 @@ public:
     DBErrors ReorderTransactions();
     bool AccountMove(std::string strFrom, std::string strTo,
                      const Amount nAmount, std::string strComment = "");
-    bool GetLabelAddress(CPubKey &pubKey, const std::string &label,
-                         bool bForceNew = false);
+    bool GetLabelDestination(CTxDestination &dest, const std::string &label,
+                             bool bForceNew = false);
 
     void MarkDirty();
     bool AddToWallet(const CWalletTx &wtxIn, bool fFlushOnClose = true);
@@ -1090,7 +1097,7 @@ public:
     bool IsAllFromMe(const CTransaction &tx, const isminefilter &filter) const;
     Amount GetCredit(const CTransaction &tx, const isminefilter &filter) const;
     Amount GetChange(const CTransaction &tx) const;
-    void SetBestChain(const CBlockLocator &loc) override;
+    void ChainStateFlushed(const CBlockLocator &loc) override;
 
     DBErrors LoadWallet(bool &fFirstRunRet);
     DBErrors ZapWalletTx(std::vector<CWalletTx> &vWtx);
@@ -1192,7 +1199,8 @@ public:
      * in case of an error.
      */
     static CWallet *CreateWalletFromFile(const CChainParams &chainParams,
-                                         const std::string walletFile);
+                                         const std::string &name,
+                                         const fs::path &path);
 
     /**
      * Wallet post-init setup
@@ -1228,6 +1236,28 @@ public:
      * deadlock
      */
     void BlockUntilSyncedToCurrentChain();
+
+    /**
+     * Explicitly make the wallet learn the related scripts for outputs to the
+     * given key. This is purely to make the wallet file compatible with older
+     * software, as CBasicKeyStore automatically does this implicitly for all
+     * keys now.
+     */
+    void LearnRelatedScripts(const CPubKey &key, OutputType);
+
+    /**
+     * Same as LearnRelatedScripts, but when the OutputType is not known (and
+     * could be anything).
+     */
+    void LearnAllRelatedScripts(const CPubKey &key);
+
+    /**
+     * Get a destination of the requested type (if possible) to the specified
+     * script. This function will automatically add the necessary scripts to the
+     * wallet.
+     */
+    CTxDestination AddAndGetDestinationForScript(const CScript &script,
+                                                 OutputType);
 };
 
 /** A key allocated from the key pool. */
@@ -1339,5 +1369,20 @@ public:
         }
     }
 };
+
+OutputType ParseOutputType(const std::string &str,
+                           OutputType default_type = OutputType::DEFAULT);
+const std::string &FormatOutputType(OutputType type);
+
+/**
+ * Get a destination of the requested type (if possible) to the specified key.
+ * The caller must make sure LearnRelatedScripts has been called beforehand.
+ */
+CTxDestination GetDestinationForKey(const CPubKey &key, OutputType);
+
+/**
+ * Get all destinations (potentially) supported by the wallet for the given key.
+ */
+std::vector<CTxDestination> GetAllDestinationsForKey(const CPubKey &key);
 
 #endif // BITCOIN_WALLET_WALLET_H

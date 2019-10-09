@@ -43,15 +43,19 @@ static Mutex cs_blockchange;
 static std::condition_variable cond_blockchange;
 static CUpdatedBlock latestblock;
 
-static double GetDifficultyFromBits(uint32_t nBits) {
-    int nShift = (nBits >> 24) & 0xff;
-    double dDiff = 0x0000ffff / double(nBits & 0x00ffffff);
+/**
+ * Calculate the difficulty for a given block index.
+ */
+double GetDifficulty(const CBlockIndex *blockindex) {
+    assert(blockindex);
+
+    int nShift = (blockindex->nBits >> 24) & 0xff;
+    double dDiff = double(0x0000ffff) / double(blockindex->nBits & 0x00ffffff);
 
     while (nShift < 29) {
         dDiff *= 256.0;
         nShift++;
     }
-
     while (nShift > 29) {
         dDiff /= 256.0;
         nShift--;
@@ -60,25 +64,23 @@ static double GetDifficultyFromBits(uint32_t nBits) {
     return dDiff;
 }
 
-double GetDifficulty(const CBlockIndex *blockindex) {
-    // Floating point number that is a multiple of the minimum difficulty,
-    // minimum difficulty = 1.0.
-    if (blockindex == nullptr) {
-        return 1.0;
+static int ComputeNextBlockAndDepth(const CBlockIndex *tip,
+                                    const CBlockIndex *blockindex,
+                                    const CBlockIndex *&next) {
+    next = tip->GetAncestor(blockindex->nHeight + 1);
+    if (next && next->pprev == blockindex) {
+        return tip->nHeight - blockindex->nHeight + 1;
     }
-
-    return GetDifficultyFromBits(blockindex->nBits);
+    next = nullptr;
+    return blockindex == tip ? 1 : -1;
 }
 
-UniValue blockheaderToJSON(const CBlockIndex *blockindex) {
-    AssertLockHeld(cs_main);
+UniValue blockheaderToJSON(const CBlockIndex *tip,
+                           const CBlockIndex *blockindex) {
     UniValue result(UniValue::VOBJ);
     result.pushKV("hash", blockindex->GetBlockHash().GetHex());
-    int confirmations = -1;
-    // Only report confirmations if the block is on the main chain
-    if (chainActive.Contains(blockindex)) {
-        confirmations = chainActive.Height() - blockindex->nHeight + 1;
-    }
+    const CBlockIndex *pnext;
+    int confirmations = ComputeNextBlockAndDepth(tip, blockindex, pnext);
     result.pushKV("confirmations", confirmations);
     result.pushKV("height", blockindex->nHeight);
     result.pushKV("version", blockindex->nVersion);
@@ -95,7 +97,6 @@ UniValue blockheaderToJSON(const CBlockIndex *blockindex) {
         result.pushKV("previousblockhash",
                       blockindex->pprev->GetBlockHash().GetHex());
     }
-    CBlockIndex *pnext = chainActive.Next(blockindex);
     if (pnext) {
         result.pushKV("nextblockhash", pnext->GetBlockHash().GetHex());
     }
@@ -208,16 +209,12 @@ UniValue blockToDeltasJSON(const CBlock& block, const CBlockIndex* blockindex)
     return result;
 }
 
-UniValue blockToJSON(const Config &config, const CBlock &block,
+UniValue blockToJSON(const CBlock &block, const CBlockIndex *tip,
                      const CBlockIndex *blockindex, bool txDetails) {
-    AssertLockHeld(cs_main);
     UniValue result(UniValue::VOBJ);
     result.pushKV("hash", blockindex->GetBlockHash().GetHex());
-    int confirmations = -1;
-    // Only report confirmations if the block is on the main chain
-    if (chainActive.Contains(blockindex)) {
-        confirmations = chainActive.Height() - blockindex->nHeight + 1;
-    }
+    const CBlockIndex *pnext;
+    int confirmations = ComputeNextBlockAndDepth(tip, blockindex, pnext);
     result.pushKV("confirmations", confirmations);
     result.pushKV(
         "size", (int)::GetSerializeSize(block, SER_NETWORK, PROTOCOL_VERSION));
@@ -247,7 +244,6 @@ UniValue blockToJSON(const Config &config, const CBlock &block,
         result.pushKV("previousblockhash",
                       blockindex->pprev->GetBlockHash().GetHex());
     }
-    CBlockIndex *pnext = chainActive.Next(blockindex);
     if (pnext) {
         result.pushKV("nextblockhash", pnext->GetBlockHash().GetHex());
     }
@@ -578,7 +574,7 @@ static void entryToJSON(UniValue &info, const CTxMemPoolEntry &e)
     info.pushKV("depends", depends);
 }
 
-UniValue mempoolToJSON(bool fVerbose = false) {
+UniValue mempoolToJSON(bool fVerbose) {
     if (fVerbose) {
         LOCK(g_mempool.cs);
         UniValue o(UniValue::VOBJ);
@@ -1004,7 +1000,7 @@ static UniValue getblockheader(const Config &config,
         return strHex;
     }
 
-    return blockheaderToJSON(pblockindex);
+    return blockheaderToJSON(chainActive.Tip(), pblockindex);
 }
 
 static UniValue getblock(const Config &config, const JSONRPCRequest &request) {
@@ -1114,7 +1110,7 @@ static UniValue getblock(const Config &config, const JSONRPCRequest &request) {
         return strHex;
     }
 
-    return blockToJSON(config, block, pblockindex, verbosity >= 2);
+    return blockToJSON(block, chainActive.Tip(), pblockindex, verbosity >= 2);
 }
 
 struct CCoinsStats {
@@ -1425,7 +1421,7 @@ static UniValue verifychain(const Config &config,
 }
 
 /** Implementation of IsSuperMajority with better feedback */
-static UniValue SoftForkMajorityDesc(int version, CBlockIndex *pindex,
+static UniValue SoftForkMajorityDesc(int version, const CBlockIndex *pindex,
                                      const Consensus::Params &consensusParams) {
     UniValue rv(UniValue::VOBJ);
     bool activated = false;
@@ -1448,7 +1444,7 @@ static UniValue SoftForkMajorityDesc(int version, CBlockIndex *pindex,
 }
 
 static UniValue SoftForkDesc(const std::string &name, int version,
-                             CBlockIndex *pindex,
+                             const CBlockIndex *pindex,
                              const Consensus::Params &consensusParams) {
     UniValue rv(UniValue::VOBJ);
     rv.pushKV("id", name);
@@ -1480,6 +1476,8 @@ UniValue getblockchaininfo(const Config &config,
             "current best block\n"
             "  \"verificationprogress\": xxxx, (numeric) estimate of "
             "verification progress [0..1]\n"
+            "  \"initialblockdownload\": xxxx, (bool) (debug information) "
+            "estimate of whether this node is in Initial Block Download mode.\n"
             "  \"chainwork\": \"xxxx\"           (string) total amount of work "
             "in active chain, in hexadecimal\n"
             "  \"size_on_disk\": xxxxxx,       (numeric) the estimated size of "
@@ -1514,22 +1512,23 @@ UniValue getblockchaininfo(const Config &config,
 
     LOCK(cs_main);
 
+    const CBlockIndex *tip = chainActive.Tip();
     UniValue obj(UniValue::VOBJ);
     obj.pushKV("chain", config.GetChainParams().NetworkIDString());
     obj.pushKV("blocks", int(chainActive.Height()));
     obj.pushKV("headers", pindexBestHeader ? pindexBestHeader->nHeight : -1);
-    obj.pushKV("bestblockhash", chainActive.Tip()->GetBlockHash().GetHex());
-    obj.pushKV("difficulty", double(GetDifficulty(chainActive.Tip())));
-    obj.pushKV("mediantime", int64_t(chainActive.Tip()->GetMedianTimePast()));
+    obj.pushKV("bestblockhash", tip->GetBlockHash().GetHex());
+    obj.pushKV("difficulty", double(GetDifficulty(tip)));
+    obj.pushKV("mediantime", int64_t(tip->GetMedianTimePast()));
     obj.pushKV("verificationprogress",
-               GuessVerificationProgress(config.GetChainParams().TxData(),
-                                         chainActive.Tip()));
-    obj.pushKV("chainwork", chainActive.Tip()->nChainWork.GetHex());
+               GuessVerificationProgress(Params().TxData(), tip));
+    obj.pushKV("initialblockdownload", IsInitialBlockDownload());
+    obj.pushKV("chainwork", tip->nChainWork.GetHex());
     obj.pushKV("size_on_disk", CalculateCurrentUsage());
     obj.pushKV("pruned", fPruneMode);
 
     if (fPruneMode) {
-        CBlockIndex *block = chainActive.Tip();
+        const CBlockIndex *block = tip;
         assert(block);
         while (block->pprev && (block->pprev->nStatus.hasData())) {
             block = block->pprev;
@@ -1547,7 +1546,6 @@ UniValue getblockchaininfo(const Config &config,
 
     const Consensus::Params &consensusParams =
         config.GetChainParams().GetConsensus();
-    CBlockIndex *tip = chainActive.Tip();
     UniValue softforks(UniValue::VARR);
     softforks.push_back(SoftForkDesc("bip34", 2, tip, consensusParams));
     softforks.push_back(SoftForkDesc("bip66", 3, tip, consensusParams));

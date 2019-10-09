@@ -8,6 +8,7 @@
 #include <config.h>
 #include <core_io.h>
 #include <httpserver.h>
+#include <index/txindex.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <rpc/blockchain.h>
@@ -62,9 +63,6 @@ struct CCoin {
     }
 };
 
-extern UniValue mempoolInfoToJSON();
-extern UniValue mempoolToJSON(bool fVerbose = false);
-
 static bool RESTERR(HTTPRequest *req, enum HTTPStatusCode status,
                     std::string message) {
     req->WriteHeader("Content-Type", "text/plain");
@@ -95,7 +93,7 @@ static enum RetFormat ParseDataFormat(std::string &param,
 }
 
 static std::string AvailableDataFormatsString() {
-    std::string formats = "";
+    std::string formats;
     for (size_t i = 0; i < ARRAYLEN(rf_names); i++) {
         if (strlen(rf_names[i].name) > 0) {
             formats.append(".");
@@ -159,10 +157,12 @@ static bool rest_headers(Config &config, HTTPRequest *req,
         return RESTERR(req, HTTP_BAD_REQUEST, "Invalid hash: " + hashStr);
     }
 
+    const CBlockIndex *tip = nullptr;
     std::vector<const CBlockIndex *> headers;
     headers.reserve(count);
     {
         LOCK(cs_main);
+        tip = chainActive.Tip();
         const CBlockIndex *pindex = LookupBlockIndex(hash);
         while (pindex != nullptr && chainActive.Contains(pindex)) {
             headers.push_back(pindex);
@@ -195,11 +195,8 @@ static bool rest_headers(Config &config, HTTPRequest *req,
         }
         case RetFormat::JSON: {
             UniValue jsonHeaders(UniValue::VARR);
-            {
-                LOCK(cs_main);
-                for (const CBlockIndex *pindex : headers) {
-                    jsonHeaders.push_back(blockheaderToJSON(pindex));
-                }
+            for (const CBlockIndex *pindex : headers) {
+                jsonHeaders.push_back(blockheaderToJSON(tip, pindex));
             }
             std::string strJSON = jsonHeaders.write() + "\n";
             req->WriteHeader("Content-Type", "application/json");
@@ -233,8 +230,10 @@ static bool rest_block(const Config &config, HTTPRequest *req,
 
     CBlock block;
     CBlockIndex *pblockindex = nullptr;
+    CBlockIndex *tip = nullptr;
     {
         LOCK(cs_main);
+        tip = chainActive.Tip();
         pblockindex = LookupBlockIndex(hash);
         if (!pblockindex) {
             return RESTERR(req, HTTP_NOT_FOUND, hashStr + " not found");
@@ -271,12 +270,8 @@ static bool rest_block(const Config &config, HTTPRequest *req,
         }
 
         case RetFormat::JSON: {
-            UniValue objBlock;
-            {
-                LOCK(cs_main);
-                objBlock =
-                    blockToJSON(config, block, pblockindex, showTxDetails);
-            }
+            UniValue objBlock =
+                blockToJSON(block, tip, pblockindex, showTxDetails);
             std::string strJSON = objBlock.write() + "\n";
             req->WriteHeader("Content-Type", "application/json");
             req->WriteReply(HTTP_OK, strJSON);
@@ -409,6 +404,10 @@ static bool rest_tx(Config &config, HTTPRequest *req,
 
     const TxId txid(hash);
 
+    if (g_txindex) {
+        g_txindex->BlockUntilSyncedToCurrentChain();
+    }
+
     CTransactionRef tx;
     uint256 hashBlock = uint256();
     if (!GetTransaction(config, txid, tx, hashBlock, true)) {
@@ -469,7 +468,7 @@ static bool rest_getutxos(Config &config, HTTPRequest *req,
         boost::split(uriParts, strUriParams, boost::is_any_of("/"));
     }
 
-    // throw exception in case of a empty request
+    // throw exception in case of an empty request
     std::string strRequestMutable = req->ReadBody();
     if (strRequestMutable.length() == 0 && uriParts.size() == 0) {
         return RESTERR(req, HTTP_BAD_REQUEST, "Error: empty request");

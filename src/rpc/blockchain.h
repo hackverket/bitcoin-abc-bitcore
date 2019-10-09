@@ -14,11 +14,29 @@ class JSONRPCRequest;
 
 UniValue getblockchaininfo(const Config &config, const JSONRPCRequest &request);
 
+/**
+ * Get the required difficulty of the next block w/r/t the given block index.
+ *
+ * @return A floating point number that is a multiple of the main net minimum
+ * difficulty (4295032833 hashes).
+ */
 double GetDifficulty(const CBlockIndex *blockindex);
 
-UniValue blockToJSON(const Config &config, const CBlock &block,
+/** Callback for when block tip changed. */
+void RPCNotifyBlockChange(bool ibd, const CBlockIndex *pindex);
+
+/** Block description to JSON */
+UniValue blockToJSON(const CBlock &block, const CBlockIndex *tip,
                      const CBlockIndex *blockindex, bool txDetails = false);
 
-UniValue blockheaderToJSON(const CBlockIndex *blockindex);
+/** Mempool information to JSON */
+UniValue mempoolInfoToJSON();
+
+/** Mempool to JSON */
+UniValue mempoolToJSON(bool fVerbose = false);
+
+/** Block header to JSON */
+UniValue blockheaderToJSON(const CBlockIndex *tip,
+                           const CBlockIndex *blockindex);
 
 #endif // BITCOIN_RPCBLOCKCHAIN_H

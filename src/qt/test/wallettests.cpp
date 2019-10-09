@@ -114,22 +114,23 @@ void TestGUI() {
     }
 #endif
 
+    g_address_type = OutputType::LEGACY;
+    g_change_type = OutputType::LEGACY;
+
     // Set up wallet and chain with 105 blocks (5 mature blocks for spending).
     TestChain100Setup test;
     for (int i = 0; i < 5; ++i) {
         test.CreateAndProcessBlock(
             {}, GetScriptForRawPubKey(test.coinbaseKey.GetPubKey()));
     }
-    bitdb.MakeMock();
-    std::unique_ptr<CWalletDBWrapper> dbw(
-        new CWalletDBWrapper(&bitdb, "wallet_test.dat"));
-    CWallet wallet(Params(), std::move(dbw));
+    CWallet wallet(Params(), "mock", CWalletDBWrapper::CreateMock());
     bool firstRun;
     wallet.LoadWallet(firstRun);
     {
         LOCK(wallet.cs_wallet);
-        wallet.SetAddressBook(test.coinbaseKey.GetPubKey().GetID(), "",
-                              "receive");
+        wallet.SetAddressBook(
+            GetDestinationForKey(test.coinbaseKey.GetPubKey(), g_address_type),
+            "", "receive");
         wallet.AddKeyPubKey(test.coinbaseKey, test.coinbaseKey.GetPubKey());
     }
     {
@@ -241,9 +242,6 @@ void TestGUI() {
         receiveCoinsDialog.findChild<QPushButton *>("removeRequestButton");
     removeRequestButton->click();
     QCOMPARE(requestTableModel->rowCount({}), currentRowCount - 1);
-
-    bitdb.Flush(true);
-    bitdb.Reset();
 }
 
 }

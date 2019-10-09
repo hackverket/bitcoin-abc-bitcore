@@ -70,22 +70,26 @@ bool AppInit(int argc, char *argv[]) {
     //
     // If Qt is used, parameters/bitcoin.conf are parsed in qt/bitcoin.cpp's
     // main()
+    SetupServerArgs();
+#if HAVE_DECL_DAEMON
+    gArgs.AddArg("-daemon",
+                 _("Run in the background as a daemon and accept commands"),
+                 false, OptionsCategory::OPTIONS);
+#endif
     gArgs.ParseParameters(argc, argv);
 
     // Process help and version before taking care about datadir
     if (HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
-        std::string strUsage = strprintf(_("%s Daemon"), _(PACKAGE_NAME)) +
-                               " " + _("version") + " " + FormatFullVersion() +
-                               "\n";
+        std::string strUsage =
+            PACKAGE_NAME " Daemon version " + FormatFullVersion() + "\n";
 
         if (gArgs.IsArgSet("-version")) {
             strUsage += FormatParagraph(LicenseInfo());
         } else {
-            strUsage += "\n" + _("Usage:") + "\n" +
-                        "  bitcoind [options]                     " +
-                        strprintf(_("Start %s Daemon"), _(PACKAGE_NAME)) + "\n";
+            strUsage += "\nUsage:  bitcoind [options]                     "
+                        "Start " PACKAGE_NAME " Daemon\n";
 
-            strUsage += "\n" + HelpMessage(HelpMessageMode::BITCOIND);
+            strUsage += "\n" + gArgs.GetHelpMessage();
         }
 
         fprintf(stdout, "%s", strUsage.c_str());
@@ -100,7 +104,7 @@ bool AppInit(int argc, char *argv[]) {
             return false;
         }
         try {
-            gArgs.ReadConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME));
+            gArgs.ReadConfigFiles();
         } catch (const std::exception &e) {
             fprintf(stderr, "Error reading configuration file: %s\n", e.what());
             return false;
@@ -137,7 +141,7 @@ bool AppInit(int argc, char *argv[]) {
             // up on console
             return false;
         }
-        if (!AppInitParameterInteraction(config, rpcServer)) {
+        if (!AppInitParameterInteraction(config)) {
             // InitError will have been called with detailed error, which ends
             // up on console
             return false;
@@ -178,7 +182,7 @@ bool AppInit(int argc, char *argv[]) {
             // If locking the data directory failed, exit immediately
             return false;
         }
-        fRet = AppInitMain(config, httpRPCRequestProcessor);
+        fRet = AppInitMain(config, rpcServer, httpRPCRequestProcessor);
     } catch (const std::exception &e) {
         PrintExceptionContinue(&e, "AppInit()");
     } catch (...) {

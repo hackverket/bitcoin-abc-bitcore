@@ -10,27 +10,19 @@
 #include <wallet/rpcdump.h>
 #include <wallet/wallet.h>
 
-std::unique_ptr<CWallet> pwalletMain;
-
 WalletTestingSetup::WalletTestingSetup(const std::string &chainName)
-    : TestingSetup(chainName) {
-    bitdb.MakeMock();
-
+    : TestingSetup(chainName),
+      m_wallet(Params(), "mock", CWalletDBWrapper::CreateMock()) {
     bool fFirstRun;
-    std::unique_ptr<CWalletDBWrapper> dbw(
-        new CWalletDBWrapper(&bitdb, "wallet_test.dat"));
-    pwalletMain = std::make_unique<CWallet>(Params(), std::move(dbw));
-    pwalletMain->LoadWallet(fFirstRun);
-    RegisterValidationInterface(pwalletMain.get());
+    g_address_type = OutputType::DEFAULT;
+    g_change_type = OutputType::DEFAULT;
+    m_wallet.LoadWallet(fFirstRun);
+    RegisterValidationInterface(&m_wallet);
 
     RegisterWalletRPCCommands(tableRPC);
     RegisterDumpRPCCommands(tableRPC);
 }
 
 WalletTestingSetup::~WalletTestingSetup() {
-    UnregisterValidationInterface(pwalletMain.get());
-    pwalletMain.reset();
-
-    bitdb.Flush(true);
-    bitdb.Reset();
+    UnregisterValidationInterface(&m_wallet);
 }

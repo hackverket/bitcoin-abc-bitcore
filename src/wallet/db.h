@@ -11,6 +11,7 @@
 #include <serialize.h>
 #include <streams.h>
 #include <sync.h>
+#include <util.h>
 #include <version.h>
 
 #include <db_cxx.h>
@@ -32,20 +33,19 @@ private:
     // pointer.
     std::string strPath;
 
-    void EnvShutdown();
-
 public:
-    mutable CCriticalSection cs_db;
     std::unique_ptr<DbEnv> dbenv;
     std::map<std::string, int> mapFileUseCount;
     std::map<std::string, Db *> mapDb;
 
-    CDBEnv();
+    CDBEnv(const fs::path &env_directory);
     ~CDBEnv();
     void Reset();
 
     void MakeMock();
     bool IsMock() const { return fMockDb; }
+    bool IsInitialized() const { return fDbEnvInit; }
+    fs::path Directory() const { return strPath; }
 
     /**
      * Verify that database file strFile is OK. If it is not, call the callback
@@ -54,7 +54,7 @@ public:
      * Returns true if strFile is OK.
      */
     enum class VerifyResult { VERIFY_OK, RECOVER_OK, RECOVER_FAIL };
-    typedef bool (*recoverFunc_type)(const std::string &strFile,
+    typedef bool (*recoverFunc_type)(const fs::path &file_path,
                                      std::string &out_backup_filename);
     VerifyResult Verify(const std::string &strFile,
                         recoverFunc_type recoverFunc,
@@ -72,7 +72,7 @@ public:
     bool Salvage(const std::string &strFile, bool fAggressive,
                  std::vector<KeyValPair> &vResult);
 
-    bool Open(const fs::path &path, bool retry = 0);
+    bool Open(bool retry);
     void Close();
     void Flush(bool fShutdown);
     void CheckpointLSN(const std::string &strFile);
@@ -87,7 +87,9 @@ public:
     }
 };
 
-extern CDBEnv bitdb;
+/** Get CDBEnv and database filename given a wallet path. */
+CDBEnv *GetWalletEnv(const fs::path &wallet_path,
+                     std::string &database_filename);
 
 /**
  * An instance of this class represents one database.
@@ -99,12 +101,36 @@ class CWalletDBWrapper {
 public:
     /** Create dummy DB handle */
     CWalletDBWrapper()
-        : nLastSeen(0), nLastFlushed(0), nLastWalletUpdate(0), env(nullptr) {}
+        : nUpdateCounter(0), nLastSeen(0), nLastFlushed(0),
+          nLastWalletUpdate(0), env(nullptr) {}
 
     /** Create DB handle to real database */
-    CWalletDBWrapper(CDBEnv *env_in, const std::string &strFile_in)
-        : nLastSeen(0), nLastFlushed(0), nLastWalletUpdate(0), env(env_in),
-          strFile(strFile_in) {}
+    CWalletDBWrapper(const fs::path &wallet_path, bool mock = false)
+        : nUpdateCounter(0), nLastSeen(0), nLastFlushed(0),
+          nLastWalletUpdate(0) {
+        env = GetWalletEnv(wallet_path, strFile);
+        if (mock) {
+            env->Close();
+            env->Reset();
+            env->MakeMock();
+        }
+    }
+
+    /** Return object for accessing database at specified path. */
+    static std::unique_ptr<CWalletDBWrapper> Create(const fs::path &path) {
+        return std::make_unique<CWalletDBWrapper>(path);
+    }
+
+    /** Return object for accessing dummy database with no read/write
+     * capabilities. */
+    static std::unique_ptr<CWalletDBWrapper> CreateDummy() {
+        return std::make_unique<CWalletDBWrapper>();
+    }
+
+    /** Return object for accessing temporary in-memory database. */
+    static std::unique_ptr<CWalletDBWrapper> CreateMock() {
+        return std::make_unique<CWalletDBWrapper>("", true /* mock */);
+    }
 
     /** Rewrite the entire database on disk, with the exception of key pszSkip
      * if non-zero
@@ -114,10 +140,6 @@ public:
     /** Back up the entire database to a file.
      */
     bool Backup(const std::string &strDest);
-
-    /** Get a name for this database, for debugging etc.
-     */
-    std::string GetName() const { return strFile; }
 
     /** Make sure all changes are flushed to disk.
      */
@@ -163,7 +185,7 @@ public:
 
     void Flush();
     void Close();
-    static bool Recover(const std::string &filename, void *callbackDataIn,
+    static bool Recover(const fs::path &file_path, void *callbackDataIn,
                         bool (*recoverKVcallback)(void *callbackData,
                                                   CDataStream ssKey,
                                                   CDataStream ssValue),
@@ -173,12 +195,10 @@ public:
        ideal to be called periodically */
     static bool PeriodicFlush(CWalletDBWrapper &dbw);
     /* verifies the database environment */
-    static bool VerifyEnvironment(const std::string &walletFile,
-                                  const fs::path &walletDir,
+    static bool VerifyEnvironment(const fs::path &file_path,
                                   std::string &errorStr);
     /* verifies the database file */
-    static bool VerifyDatabaseFile(const std::string &walletFile,
-                                   const fs::path &walletDir,
+    static bool VerifyDatabaseFile(const fs::path &file_path,
                                    std::string &warningStr,
                                    std::string &errorStr,
                                    CDBEnv::recoverFunc_type recoverFunc);
@@ -199,26 +219,26 @@ public:
         Dbt datValue;
         datValue.set_flags(DB_DBT_MALLOC);
         int ret = pdb->get(activeTxn, &datKey, &datValue, 0);
-        memset(datKey.get_data(), 0, datKey.get_size());
-        if (datValue.get_data() == nullptr) {
-            return false;
-        }
+        memory_cleanse(datKey.get_data(), datKey.get_size());
+        bool success = false;
+        if (datValue.get_data() != nullptr) {
+            // Unserialize value
+            try {
+                CDataStream ssValue((char *)datValue.get_data(),
+                                    (char *)datValue.get_data() +
+                                        datValue.get_size(),
+                                    SER_DISK, CLIENT_VERSION);
+                ssValue >> value;
+                success = true;
+            } catch (const std::exception &) {
+                // In this case success remains 'false'
+            }
 
-        // Unserialize value
-        try {
-            CDataStream ssValue((char *)datValue.get_data(),
-                                (char *)datValue.get_data() +
-                                    datValue.get_size(),
-                                SER_DISK, CLIENT_VERSION);
-            ssValue >> value;
-        } catch (const std::exception &) {
-            return false;
+            // Clear and free memory
+            memory_cleanse(datValue.get_data(), datValue.get_size());
+            free(datValue.get_data());
         }
-
-        // Clear and free memory
-        memset(datValue.get_data(), 0, datValue.get_size());
-        free(datValue.get_data());
-        return (ret == 0);
+        return ret == 0 && success;
     }
 
     template <typename K, typename T>
@@ -247,8 +267,8 @@ public:
                            (fOverwrite ? 0 : DB_NOOVERWRITE));
 
         // Clear memory in case it was a private key
-        memset(datKey.get_data(), 0, datKey.get_size());
-        memset(datValue.get_data(), 0, datValue.get_size());
+        memory_cleanse(datKey.get_data(), datKey.get_size());
+        memory_cleanse(datValue.get_data(), datValue.get_size());
         return (ret == 0);
     }
 
@@ -270,7 +290,7 @@ public:
         int ret = pdb->del(activeTxn, &datKey, 0);
 
         // Clear memory
-        memset(datKey.get_data(), 0, datKey.get_size());
+        memory_cleanse(datKey.get_data(), datKey.get_size());
         return (ret == 0 || ret == DB_NOTFOUND);
     }
 
@@ -289,7 +309,7 @@ public:
         int ret = pdb->exists(activeTxn, &datKey, 0);
 
         // Clear memory
-        memset(datKey.get_data(), 0, datKey.get_size());
+        memory_cleanse(datKey.get_data(), datKey.get_size());
         return (ret == 0);
     }
 
@@ -335,8 +355,8 @@ public:
         ssValue.write((char *)datValue.get_data(), datValue.get_size());
 
         // Clear and free memory
-        memset(datKey.get_data(), 0, datKey.get_size());
-        memset(datValue.get_data(), 0, datValue.get_size());
+        memory_cleanse(datKey.get_data(), datKey.get_size());
+        memory_cleanse(datValue.get_data(), datValue.get_size());
         free(datKey.get_data());
         free(datValue.get_data());
         return 0;
@@ -347,7 +367,7 @@ public:
         if (!pdb || activeTxn) {
             return false;
         }
-        DbTxn *ptxn = bitdb.TxnBegin();
+        DbTxn *ptxn = env->TxnBegin();
         if (!ptxn) {
             return false;
         }

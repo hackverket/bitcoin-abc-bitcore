@@ -172,7 +172,7 @@ public:
     explicit BitcoinABC(interfaces::Node &node);
 
 public Q_SLOTS:
-    void initialize(Config *config,
+    void initialize(Config *config, RPCServer *rpcServer,
                     HTTPRPCRequestProcessor *httpRPCRequestProcessor);
     void shutdown();
 
@@ -209,7 +209,7 @@ public:
     void createSplashScreen(const NetworkStyle *networkStyle);
 
     /// Request core initialization
-    void requestInitialize(Config &config,
+    void requestInitialize(Config &config, RPCServer &rpcServer,
                            HTTPRPCRequestProcessor &httpRPCRequestProcessor);
     /// Request core shutdown
     void requestShutdown(Config &config);
@@ -228,7 +228,7 @@ public Q_SLOTS:
     void handleRunawayException(const QString &message);
 
 Q_SIGNALS:
-    void requestedInitialize(Config *config,
+    void requestedInitialize(Config *config, RPCServer *rpcServer,
                              HTTPRPCRequestProcessor *httpRPCRequestProcessor);
     void requestedShutdown();
     void stopThread();
@@ -261,12 +261,12 @@ void BitcoinABC::handleRunawayException(const std::exception *e) {
     Q_EMIT runawayException(QString::fromStdString(m_node.getWarnings("gui")));
 }
 
-void BitcoinABC::initialize(Config *cfg,
+void BitcoinABC::initialize(Config *config, RPCServer *rpcServer,
                             HTTPRPCRequestProcessor *httpRPCRequestProcessor) {
-    Config &config(*cfg);
     try {
         qDebug() << __func__ << ": Running initialization in thread";
-        bool rv = m_node.appInitMain(config, *httpRPCRequestProcessor);
+        bool rv =
+            m_node.appInitMain(*config, *rpcServer, *httpRPCRequestProcessor);
         Q_EMIT initializeResult(rv);
     } catch (const std::exception &e) {
         handleRunawayException(&e);
@@ -391,8 +391,10 @@ void BitcoinApplication::startThread() {
     // crash because initialize() gets executed in another thread at some
     // unspecified time (after) requestedInitialize() is emitted!
     connect(this,
-            SIGNAL(requestedInitialize(Config *, HTTPRPCRequestProcessor *)),
-            executor, SLOT(initialize(Config *, HTTPRPCRequestProcessor *)));
+            SIGNAL(requestedInitialize(Config *, RPCServer *,
+                                       HTTPRPCRequestProcessor *)),
+            executor,
+            SLOT(initialize(Config *, RPCServer *, HTTPRPCRequestProcessor *)));
 
     connect(this, SIGNAL(requestedShutdown()), executor, SLOT(shutdown()));
     /*  make sure executor object is deleted in its own thread */
@@ -408,13 +410,14 @@ void BitcoinApplication::parameterSetup() {
 }
 
 void BitcoinApplication::requestInitialize(
-    Config &config, HTTPRPCRequestProcessor &httpRPCRequestProcessor) {
+    Config &config, RPCServer &rpcServer,
+    HTTPRPCRequestProcessor &httpRPCRequestProcessor) {
     qDebug() << __func__ << ": Requesting initialize";
     startThread();
     // IMPORTANT: config must NOT be a reference to a temporary because below
     // signal may be connected to a slot that will be executed as a queued
     // connection in another thread!
-    Q_EMIT requestedInitialize(&config, &httpRPCRequestProcessor);
+    Q_EMIT requestedInitialize(&config, &rpcServer, &httpRPCRequestProcessor);
 }
 
 void BitcoinApplication::requestShutdown(Config &config) {
@@ -535,6 +538,50 @@ WId BitcoinApplication::getMainWinId() const {
     return window->winId();
 }
 
+static void SetupUIArgs() {
+#ifdef ENABLE_WALLET
+    gArgs.AddArg("-allowselfsignedrootcertificates",
+                 strprintf("Allow self signed root certificates (default: %d)",
+                           DEFAULT_SELFSIGNED_ROOTCERTS),
+                 true, OptionsCategory::GUI);
+#endif
+    gArgs.AddArg(
+        "-choosedatadir",
+        strprintf(QObject::tr("Choose data directory on startup (default: %d)")
+                      .toStdString(),
+                  DEFAULT_CHOOSE_DATADIR),
+        false, OptionsCategory::GUI);
+    gArgs.AddArg(
+        "-lang=<lang>",
+        QObject::tr(
+            "Set language, for example \"de_DE\" (default: system locale)")
+            .toStdString(),
+        false, OptionsCategory::GUI);
+    gArgs.AddArg("-min", QObject::tr("Start minimized").toStdString(), false,
+                 OptionsCategory::GUI);
+    gArgs.AddArg(
+        "-rootcertificates=<file>",
+        QObject::tr(
+            "Set SSL root certificates for payment request (default: -system-)")
+            .toStdString(),
+        false, OptionsCategory::GUI);
+    gArgs.AddArg(
+        "-splash",
+        strprintf(QObject::tr("Show splash screen on startup (default: %d)")
+                      .toStdString(),
+                  DEFAULT_SPLASHSCREEN),
+        false, OptionsCategory::GUI);
+    gArgs.AddArg(
+        "-resetguisettings",
+        QObject::tr("Reset all settings changed in the GUI").toStdString(),
+        false, OptionsCategory::GUI);
+    gArgs.AddArg("-uiplatform",
+                 strprintf("Select platform to customize UI for (one of "
+                           "windows, macosx, other; default: %s)",
+                           BitcoinGUI::DEFAULT_UIPLATFORM),
+                 true, OptionsCategory::GUI);
+}
+
 #ifndef BITCOIN_QT_TEST
 
 static void MigrateSettings() {
@@ -581,6 +628,8 @@ int main(int argc, char *argv[]) {
 
     /// 1. Parse command-line options. These take precedence over anything else.
     // Command-line options take precedence:
+    node->setupServerArgs();
+    SetupUIArgs();
     node->parseParameters(argc, argv);
 
     // Do not refer to data directory yet, this can be overridden by
@@ -668,7 +717,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     try {
-        node->readConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME));
+        node->readConfigFiles();
     } catch (const std::exception &e) {
         QMessageBox::critical(
             0, QObject::tr(PACKAGE_NAME),
@@ -767,11 +816,11 @@ int main(int argc, char *argv[]) {
         // initialization/shutdown thread. This is acceptable because this
         // function only contains steps that are quick to execute, so the GUI
         // thread won't be held up.
-        if (!node->baseInitialize(config, rpcServer)) {
+        if (!node->baseInitialize(config)) {
             // A dialog with detailed error will have been shown by InitError()
             return EXIT_FAILURE;
         }
-        app.requestInitialize(config, httpRPCRequestProcessor);
+        app.requestInitialize(config, rpcServer, httpRPCRequestProcessor);
 #if defined(Q_OS_WIN)
         WinShutdownMonitor::registerShutdownBlockReason(
             QObject::tr("%1 didn't yet exit safely...")

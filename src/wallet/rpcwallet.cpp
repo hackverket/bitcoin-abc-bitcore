@@ -150,7 +150,7 @@ static UniValue getnewaddress(const Config &config,
         return NullUniValue;
     }
 
-    if (request.fHelp || request.params.size() > 1) {
+    if (request.fHelp || request.params.size() > 2) {
         throw std::runtime_error(
             "getnewaddress ( \"label\" )\n"
             "\nReturns a new Bitcoin address for receiving payments.\n"
@@ -177,6 +177,17 @@ static UniValue getnewaddress(const Config &config,
         label = LabelFromValue(request.params[0]);
     }
 
+    OutputType output_type = g_address_type;
+    if (!request.params[1].isNull()) {
+        output_type =
+            ParseOutputType(request.params[1].get_str(), g_address_type);
+        if (output_type == OutputType::NONE) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                               strprintf("Unknown address type '%s'",
+                                         request.params[1].get_str()));
+        }
+    }
+
     if (!pwallet->IsLocked()) {
         pwallet->TopUpKeyPool();
     }
@@ -188,23 +199,25 @@ static UniValue getnewaddress(const Config &config,
             RPC_WALLET_KEYPOOL_RAN_OUT,
             "Error: Keypool ran out, please call keypoolrefill first");
     }
-    CKeyID keyID = newKey.GetID();
+    pwallet->LearnRelatedScripts(newKey, output_type);
+    CTxDestination dest = GetDestinationForKey(newKey, output_type);
 
-    pwallet->SetAddressBook(keyID, label, "receive");
+    pwallet->SetAddressBook(dest, label, "receive");
 
-    return EncodeDestination(keyID);
+    return EncodeDestination(dest);
 }
 
-CTxDestination GetLabelAddress(CWallet *const pwallet, const std::string &label,
-                               bool bForceNew = false) {
-    CPubKey pubKey;
-    if (!pwallet->GetLabelAddress(pubKey, label, bForceNew)) {
+CTxDestination GetLabelDestination(CWallet *const pwallet,
+                                   const std::string &label,
+                                   bool bForceNew = false) {
+    CTxDestination dest;
+    if (!pwallet->GetLabelDestination(dest, label, bForceNew)) {
         throw JSONRPCError(
             RPC_WALLET_KEYPOOL_RAN_OUT,
             "Error: Keypool ran out, please call keypoolrefill first");
     }
 
-    return pubKey.GetID();
+    return dest;
 }
 
 UniValue getlabeladdress(const Config &config, const JSONRPCRequest &request) {
@@ -239,7 +252,7 @@ UniValue getlabeladdress(const Config &config, const JSONRPCRequest &request) {
 
     UniValue ret(UniValue::VSTR);
 
-    ret = EncodeDestination(GetLabelAddress(pwallet, label));
+    ret = EncodeDestination(GetLabelDestination(pwallet, label));
     return ret;
 }
 
@@ -250,7 +263,7 @@ static UniValue getrawchangeaddress(const Config &config,
         return NullUniValue;
     }
 
-    if (request.fHelp || request.params.size() > 0) {
+    if (request.fHelp || request.params.size() > 1) {
         throw std::runtime_error(
             "getrawchangeaddress\n"
             "\nReturns a new Bitcoin address, for receiving change.\n"
@@ -268,6 +281,17 @@ static UniValue getrawchangeaddress(const Config &config,
         pwallet->TopUpKeyPool();
     }
 
+    OutputType output_type = g_change_type;
+    if (!request.params[0].isNull()) {
+        output_type =
+            ParseOutputType(request.params[0].get_str(), g_change_type);
+        if (output_type == OutputType::NONE) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                               strprintf("Unknown address type '%s'",
+                                         request.params[0].get_str()));
+        }
+    }
+
     CReserveKey reservekey(pwallet);
     CPubKey vchPubKey;
     if (!reservekey.GetReservedKey(vchPubKey, true)) {
@@ -278,9 +302,10 @@ static UniValue getrawchangeaddress(const Config &config,
 
     reservekey.KeepKey();
 
-    CKeyID keyID = vchPubKey.GetID();
+    pwallet->LearnRelatedScripts(vchPubKey, output_type);
+    CTxDestination dest = GetDestinationForKey(vchPubKey, output_type);
 
-    return EncodeDestination(keyID);
+    return EncodeDestination(dest);
 }
 
 UniValue setlabel(const Config &config, const JSONRPCRequest &request) {
@@ -326,8 +351,8 @@ UniValue setlabel(const Config &config, const JSONRPCRequest &request) {
         // current key' of another label:
         if (pwallet->mapAddressBook.count(dest)) {
             std::string old_label = pwallet->mapAddressBook[dest].name;
-            if (dest == GetLabelAddress(pwallet, old_label)) {
-                GetLabelAddress(pwallet, old_label, true);
+            if (dest == GetLabelDestination(pwallet, old_label)) {
+                GetLabelDestination(pwallet, old_label, true);
             }
         }
 
@@ -937,9 +962,9 @@ static UniValue getbalance(const Config &config,
         return ValueFromAmount(pwallet->GetBalance());
     }
 
-    const std::string *account = request.params[0].get_str() != "*"
-                                     ? &request.params[0].get_str()
-                                     : nullptr;
+    const std::string &account_param = request.params[0].get_str();
+    const std::string *account =
+        account_param != "*" ? &account_param : nullptr;
 
     int nMinDepth = 1;
     if (!request.params[1].isNull()) {
@@ -1423,18 +1448,20 @@ UniValue addmultisigaddress(const Config &config,
 
     // Construct using pay-to-script-hash:
     CScript inner = CreateMultisigRedeemscript(required, pubkeys);
-    CScriptID innerID(inner);
     pwallet->AddCScript(inner);
 
-    pwallet->SetAddressBook(innerID, label, "send");
+    CTxDestination dest =
+        pwallet->AddAndGetDestinationForScript(inner, g_address_type);
+
+    pwallet->SetAddressBook(dest, label, "send");
 
     // Return old style interface
     if (IsDeprecatedRPCEnabled(gArgs, "addmultisigaddress")) {
-        return EncodeDestination(innerID);
+        return EncodeDestination(dest);
     }
 
     UniValue result(UniValue::VOBJ);
-    result.pushKV("address", EncodeDestination(innerID));
+    result.pushKV("address", EncodeDestination(dest));
     result.pushKV("redeemScript", HexStr(inner.begin(), inner.end()));
     return result;
 }
@@ -3949,8 +3976,8 @@ static const ContextFreeRPCCommand commands[] = {
     { "wallet",             "getaccount",                   getaccount,                   {"address"} },
     { "wallet",             "getaddressesbyaccount",        getaddressesbyaccount,        {"account"} },
     { "wallet",             "getbalance",                   getbalance,                   {"account","minconf","include_watchonly"} },
-    { "wallet",             "getnewaddress",                getnewaddress,                {"label|account"} },
-    { "wallet",             "getrawchangeaddress",          getrawchangeaddress,          {} },
+    { "wallet",             "getnewaddress",                getnewaddress,                {"label|account", "address_type"} },
+    { "wallet",             "getrawchangeaddress",          getrawchangeaddress,          {"address_type"} },
     { "wallet",             "getreceivedbylabel",           getreceivedbylabel,           {"label","minconf"} },
     { "wallet",             "getreceivedbyaccount",         getreceivedbylabel,           {"account","minconf"} },
     { "wallet",             "getreceivedbyaddress",         getreceivedbyaddress,         {"address","minconf"} },

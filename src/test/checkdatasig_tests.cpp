@@ -66,26 +66,24 @@ static void CheckTestResultForAllFlags(const stacktype &original_stack,
                                        const CScript &script,
                                        const stacktype &expected) {
     for (uint32_t flags : flagset) {
-        // Make sure that we get a bad opcode when the activation flag is not
-        // passed.
-        CheckError(flags, original_stack, script, SCRIPT_ERR_BAD_OPCODE);
-
-        // The script execute as expected if the opcodes are activated.
-        CheckPass(flags | SCRIPT_ENABLE_CHECKDATASIG, original_stack, script,
-                  expected);
+        // The script executes as expected regardless of whether or not
+        // SCRIPT_VERIFY_CHECKDATASIG_SIGOPS flag is passed.
+        CheckPass(flags & ~SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                  script, expected);
+        CheckPass(flags | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                  script, expected);
     }
 }
 
 static void CheckErrorForAllFlags(const stacktype &original_stack,
                                   const CScript &script, ScriptError expected) {
     for (uint32_t flags : flagset) {
-        // Make sure that we get a bad opcode when the activation flag is not
-        // passed.
-        CheckError(flags, original_stack, script, SCRIPT_ERR_BAD_OPCODE);
-
-        // The script generates the proper error if the opcodes are activated.
-        CheckError(flags | SCRIPT_ENABLE_CHECKDATASIG, original_stack, script,
-                   expected);
+        // The script generates the proper error regardless of whether or not
+        // SCRIPT_VERIFY_CHECKDATASIG_SIGOPS flag is passed.
+        CheckError(flags & ~SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                   script, expected);
+        CheckError(flags | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS, original_stack,
+                   script, expected);
     }
 }
 
@@ -152,7 +150,7 @@ BOOST_AUTO_TEST_CASE(checkdatasig_test) {
 
     MMIXLinearCongruentialGenerator lcg;
     for (int i = 0; i < 4096; i++) {
-        uint32_t flags = lcg.next() | SCRIPT_ENABLE_CHECKDATASIG;
+        uint32_t flags = lcg.next() | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
 
         if (flags & SCRIPT_VERIFY_STRICTENC) {
             // When strict encoding is enforced, hybrid keys are invalid.
@@ -250,6 +248,13 @@ BOOST_AUTO_TEST_CASE(checkdatasig_test) {
                        SCRIPT_ERR_CHECKDATASIGVERIFY);
         }
     }
+}
+
+BOOST_AUTO_TEST_CASE(checkdatasig_inclusion_in_standard_and_mandatory_flags) {
+    BOOST_CHECK(STANDARD_SCRIPT_VERIFY_FLAGS &
+                SCRIPT_VERIFY_CHECKDATASIG_SIGOPS);
+    BOOST_CHECK(
+        !(MANDATORY_SCRIPT_VERIFY_FLAGS & SCRIPT_VERIFY_CHECKDATASIG_SIGOPS));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
