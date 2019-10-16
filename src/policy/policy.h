@@ -14,6 +14,7 @@
 
 class CCoinsViewCache;
 class CTransaction;
+class CTxIn;
 class CTxOut;
 
 /**
@@ -86,7 +87,8 @@ static constexpr uint32_t STANDARD_SCRIPT_VERIFY_FLAGS =
     SCRIPT_VERIFY_NULLDUMMY | SCRIPT_VERIFY_SIGPUSHONLY |
     SCRIPT_VERIFY_MINIMALDATA | SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS |
     SCRIPT_VERIFY_CLEANSTACK | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY |
-    SCRIPT_VERIFY_CHECKSEQUENCEVERIFY | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS;
+    SCRIPT_VERIFY_CHECKSEQUENCEVERIFY | SCRIPT_VERIFY_CHECKDATASIG_SIGOPS |
+    SCRIPT_DISALLOW_SEGWIT_RECOVERY;
 
 /**
  * For convenience, standard but not mandatory verify flags.
@@ -123,8 +125,23 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason);
 bool AreInputsStandard(const CTransaction &tx,
                        const CCoinsViewCache &mapInputs);
 
-extern CFeeRate incrementalRelayFee;
 extern CFeeRate dustRelayFee;
 extern uint32_t nBytesPerSigOp;
+
+/** Compute the virtual transaction size (weight reinterpreted as bytes). */
+int64_t GetVirtualTransactionSize(int64_t nSize, int64_t nSigOpCost,
+                                  unsigned int bytes_per_sigop);
+int64_t GetVirtualTransactionSize(const CTransaction &tx, int64_t nSigOpCost,
+                                  unsigned int bytes_per_sigop);
+int64_t GetVirtualTransactionInputSize(const CTxIn &txin, int64_t nSigOpCost,
+                                       unsigned int bytes_per_sigop);
+
+static inline int64_t GetVirtualTransactionSize(const CTransaction &tx) {
+    return GetVirtualTransactionSize(tx, 0, 0);
+}
+
+static inline int64_t GetVirtualTransactionInputSize(const CTxIn &txin) {
+    return GetVirtualTransactionInputSize(txin, 0, 0);
+}
 
 #endif // BITCOIN_POLICY_POLICY_H

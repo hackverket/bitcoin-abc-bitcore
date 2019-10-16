@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (c) 2014 Wladimir J. van der Laan
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -11,7 +11,6 @@ Example usage:
 
     find ../gitian-builder/build -type f -executable | xargs python contrib/devtools/symbol-check.py
 '''
-from __future__ import division, print_function, unicode_literals
 import subprocess
 import re
 import sys
@@ -144,7 +143,7 @@ def read_libraries(filename):
         tokens = line.split()
         if len(tokens) > 2 and tokens[1] == '(NEEDED)':
             match = re.match(
-                '^Shared library: \[(.*)\]$', ' '.join(tokens[2:]))
+                r'^Shared library: \[(.*)\]$', ' '.join(tokens[2:]))
             if match:
                 libraries.append(match.group(1))
             else:

@@ -9,7 +9,7 @@
 #include <blockfileinfo.h>
 #include <coins.h>
 #include <dbwrapper.h>
-#include <diskblockpos.h>
+#include <flatfile.h>
 #include <primitives/block.h>
 
 #include "addressindex.h"
@@ -24,7 +24,10 @@
 class CBlockIndex;
 class CCoinsViewDBCursor;
 class uint256;
-class Config;
+
+namespace Consensus {
+struct Params;
+}
 
 //! No need to periodic flush if at least this much space still available.
 static constexpr int MAX_BLOCK_COINSDB_USAGE = 10;
@@ -103,11 +106,11 @@ public:
     bool ReadBlockFileInfo(int nFile, CBlockFileInfo &info);
     bool ReadLastBlockFile(int &nFile);
     bool WriteReindexing(bool fReindexing);
-    bool ReadReindexing(bool &fReindexing);
+    void ReadReindexing(bool &fReindexing);
     bool WriteFlag(const std::string &name, bool fValue);
     bool ReadFlag(const std::string &name, bool &fValue);
     bool LoadBlockIndexGuts(
-        const Config &config,
+        const Consensus::Params &params,
         std::function<CBlockIndex *(const uint256 &)> insertBlockIndex);
 };
 

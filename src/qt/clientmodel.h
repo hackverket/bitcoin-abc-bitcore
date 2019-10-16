@@ -11,19 +11,16 @@
 #include <atomic>
 #include <memory>
 
-class AddressTableModel;
 class BanTableModel;
 class OptionsModel;
 class PeerTableModel;
-class TransactionTableModel;
 
-class CWallet;
 class CBlockIndex;
 
 namespace interfaces {
 class Handler;
 class Node;
-}
+} // namespace interfaces
 
 QT_BEGIN_NAMESPACE
 class QTimer;
@@ -67,6 +64,7 @@ public:
     bool isReleaseVersion() const;
     QString formatClientStartupTime() const;
     QString dataDir() const;
+    QString blocksDir() const;
 
     // caches for the best header
     mutable std::atomic<int> cachedBestHeaderHeight;

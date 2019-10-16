@@ -22,7 +22,7 @@ class CValidationState;
  * Undo information for a CTxIn
  *
  * Contains the prevout's CTxOut being spent, and its metadata as well (coinbase
- * or not, height). The serialization contains a dummy value of zero. This is be
+ * or not, height). The serialization contains a dummy value of zero. This is
  * compatible with older versions which expect to see the transaction version
  * there.
  */
@@ -58,7 +58,7 @@ public:
             // Old versions stored the version number for the last spend of a
             // transaction's outputs. Non-final spends were indicated with
             // height = 0.
-            int nVersionDummy;
+            unsigned int nVersionDummy;
             ::Unserialize(s, VARINT(nVersionDummy));
         }
 

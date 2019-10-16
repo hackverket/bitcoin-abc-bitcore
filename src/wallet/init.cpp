@@ -7,8 +7,9 @@
 #include <config.h>
 #include <init.h>
 #include <net.h>
-#include <util.h>
-#include <utilmoneystr.h>
+#include <scheduler.h>
+#include <util/moneystr.h>
+#include <util/system.h>
 #include <validation.h>
 #include <wallet/rpcdump.h>
 #include <wallet/rpcwallet.h>
@@ -53,23 +54,48 @@ public:
 const WalletInitInterface &g_wallet_init_interface = WalletInit();
 
 void WalletInit::AddWalletOptions() const {
+    gArgs.AddArg(
+        "-avoidpartialspends",
+        strprintf(_("Group outputs by address, selecting all or none, instead "
+                    "of selecting on a per-output basis. Privacy is improved "
+                    "as an address is only used once (unless someone sends to "
+                    "it after spending from it), but may result in slightly "
+                    "higher fees as suboptimal coin selection may result due "
+                    "to the added limitation (default: %u)"),
+                  DEFAULT_AVOIDPARTIALSPENDS),
+        false, OptionsCategory::WALLET);
+
     gArgs.AddArg("-disablewallet",
                  _("Do not load the wallet and disable wallet RPC calls"),
-                 false, OptionsCategory::WALLET);
-    gArgs.AddArg("-keypool=<n>",
-                 strprintf(_("Set key pool size to <n> (default: %u)"),
-                           DEFAULT_KEYPOOL_SIZE),
                  false, OptionsCategory::WALLET);
     gArgs.AddArg("-fallbackfee=<amt>",
                  strprintf(_("A fee rate (in %s/kB) that will be used when fee "
                              "estimation has insufficient data (default: %s)"),
                            CURRENCY_UNIT, FormatMoney(DEFAULT_FALLBACK_FEE)),
                  false, OptionsCategory::WALLET);
+    gArgs.AddArg("-keypool=<n>",
+                 strprintf(_("Set key pool size to <n> (default: %u)"),
+                           DEFAULT_KEYPOOL_SIZE),
+                 false, OptionsCategory::WALLET);
+    gArgs.AddArg(
+        "-maxtxfee=<amt>",
+        strprintf(_("Maximum total fees (in %s) to use in a single wallet "
+                    "transaction or raw transaction; setting this too low may "
+                    "abort large transactions (default: %s)"),
+                  CURRENCY_UNIT, FormatMoney(DEFAULT_TRANSACTION_MAXFEE)),
+        false, OptionsCategory::DEBUG_TEST);
+    gArgs.AddArg("-mintxfee=<amt>",
+                 strprintf(_("Fees (in %s/kB) smaller than this are considered "
+                             "zero fee for transaction creation (default: %s)"),
+                           CURRENCY_UNIT,
+                           FormatMoney(DEFAULT_TRANSACTION_MINFEE_PER_KB)),
+                 false, OptionsCategory::WALLET);
     gArgs.AddArg(
         "-paytxfee=<amt>",
         strprintf(
             _("Fee (in %s/kB) to add to transactions you send (default: %s)"),
-            CURRENCY_UNIT, FormatMoney(payTxFee.GetFeePerK())),
+            CURRENCY_UNIT,
+            FormatMoney(CFeeRate{DEFAULT_PAY_TX_FEE}.GetFeePerK())),
         false, OptionsCategory::WALLET);
     gArgs.AddArg(
         "-rescan",
@@ -140,8 +166,6 @@ void WalletInit::AddWalletOptions() const {
 }
 
 bool WalletInit::ParameterInteraction() const {
-    CFeeRate minRelayTxFee = GetConfig().GetMinFeePerKB();
-
     gArgs.SoftSetArg("-wallet", "");
     const bool is_multiwallet = gArgs.GetArgs("-wallet").size() > 1;
 
@@ -219,45 +243,6 @@ bool WalletInit::ParameterInteraction() const {
             _("The wallet will avoid paying less than the minimum relay fee."));
     }
 
-    if (gArgs.IsArgSet("-fallbackfee")) {
-        Amount nFeePerK = Amount::zero();
-        if (!ParseMoney(gArgs.GetArg("-fallbackfee", ""), nFeePerK)) {
-            return InitError(
-                strprintf(_("Invalid amount for -fallbackfee=<amount>: '%s'"),
-                          gArgs.GetArg("-fallbackfee", "")));
-        }
-
-        if (nFeePerK > HIGH_TX_FEE_PER_KB) {
-            InitWarning(AmountHighWarn("-fallbackfee") + " " +
-                        _("This is the transaction fee you may pay when fee "
-                          "estimates are not available."));
-        }
-
-        CWallet::fallbackFee = CFeeRate(nFeePerK);
-    }
-
-    if (gArgs.IsArgSet("-paytxfee")) {
-        Amount nFeePerK = Amount::zero();
-        if (!ParseMoney(gArgs.GetArg("-paytxfee", ""), nFeePerK)) {
-            return InitError(
-                AmountErrMsg("paytxfee", gArgs.GetArg("-paytxfee", "")));
-        }
-
-        if (nFeePerK > HIGH_TX_FEE_PER_KB) {
-            InitWarning(AmountHighWarn("-paytxfee") + " " +
-                        _("This is the transaction fee you will pay if you "
-                          "send a transaction."));
-        }
-
-        payTxFee = CFeeRate(nFeePerK, 1000);
-        if (payTxFee < minRelayTxFee) {
-            return InitError(strprintf(
-                _("Invalid amount for -paytxfee=<amount>: '%s' (must "
-                  "be at least %s)"),
-                gArgs.GetArg("-paytxfee", ""), minRelayTxFee.ToString()));
-        }
-    }
-
     if (gArgs.IsArgSet("-maxtxfee")) {
         Amount nMaxFee = Amount::zero();
         if (!ParseMoney(gArgs.GetArg("-maxtxfee", ""), nMaxFee)) {
@@ -279,12 +264,6 @@ bool WalletInit::ParameterInteraction() const {
                 gArgs.GetArg("-maxtxfee", ""), minRelayTxFee.ToString()));
         }
     }
-
-    bSpendZeroConfChange =
-        gArgs.GetBoolArg("-spendzeroconfchange", DEFAULT_SPEND_ZEROCONF_CHANGE);
-
-    g_address_type = OutputType::DEFAULT;
-    g_change_type = OutputType::DEFAULT;
 
     return true;
 }
@@ -324,65 +303,38 @@ bool WalletInit::Verify(const CChainParams &chainParams) const {
 
     uiInterface.InitMessage(_("Verifying wallet(s)..."));
 
+    std::vector<std::string> wallet_files = gArgs.GetArgs("-wallet");
+
+    // Parameter interaction code should have thrown an error if -salvagewallet
+    // was enabled with more than wallet file, so the wallet_files size check
+    // here should have no effect.
+    bool salvage_wallet =
+        gArgs.GetBoolArg("-salvagewallet", false) && wallet_files.size() <= 1;
+
     // Keep track of each wallet absolute path to detect duplicates.
     std::set<fs::path> wallet_paths;
 
-    for (const std::string &walletFile : gArgs.GetArgs("-wallet")) {
-        // Do some checking on wallet path. It should be either a:
-        //
-        // 1. Path where a directory can be created.
-        // 2. Path to an existing directory.
-        // 3. Path to a symlink to a directory.
-        // 4. For backwards compatibility, the name of a data file in
-        // -walletdir.
-        fs::path wallet_path = fs::absolute(walletFile, GetWalletDir());
-        fs::file_type path_type = fs::symlink_status(wallet_path).type();
-        if (!(path_type == fs::file_not_found ||
-              path_type == fs::directory_file ||
-              (path_type == fs::symlink_file &&
-               fs::is_directory(wallet_path)) ||
-              (path_type == fs::regular_file &&
-               fs::path(walletFile).filename() == walletFile))) {
-            return InitError(strprintf(
-                _("Invalid -wallet path '%s'. -wallet path should point to a "
-                  "directory where wallet.dat and database/log.?????????? "
-                  "files can be stored, a location where such a directory "
-                  "could be created, or (for backwards compatibility) the name "
-                  "of an existing data file in -walletdir (%s)"),
-                walletFile, GetWalletDir()));
-        }
+    for (const auto &wallet_file : wallet_files) {
+        fs::path wallet_path = fs::absolute(wallet_file, GetWalletDir());
 
         if (!wallet_paths.insert(wallet_path).second) {
             return InitError(strprintf(_("Error loading wallet %s. Duplicate "
                                          "-wallet filename specified."),
-                                       walletFile));
+                                       wallet_file));
         }
 
-        std::string strError;
-        if (!CWalletDB::VerifyEnvironment(wallet_path, strError)) {
-            return InitError(strError);
+        std::string error_string;
+        std::string warning_string;
+        bool verify_success =
+            CWallet::Verify(chainParams, wallet_file, salvage_wallet,
+                            error_string, warning_string);
+        if (!error_string.empty()) {
+            InitError(error_string);
         }
-
-        if (gArgs.GetBoolArg("-salvagewallet", false)) {
-            // Recover readable keypairs:
-            CWallet dummyWallet(chainParams, "dummy",
-                                CWalletDBWrapper::CreateDummy());
-            std::string backup_filename;
-            if (!CWalletDB::Recover(wallet_path, (void *)&dummyWallet,
-                                    CWalletDB::RecoverKeysOnlyFilter,
-                                    backup_filename)) {
-                return false;
-            }
+        if (!warning_string.empty()) {
+            InitWarning(warning_string);
         }
-
-        std::string strWarning;
-        bool dbV =
-            CWalletDB::VerifyDatabaseFile(wallet_path, strWarning, strError);
-        if (!strWarning.empty()) {
-            InitWarning(strWarning);
-        }
-        if (!dbV) {
-            InitError(strError);
+        if (!verify_success) {
             return false;
         }
     }
@@ -397,38 +349,45 @@ bool WalletInit::Open(const CChainParams &chainParams) const {
     }
 
     for (const std::string &walletFile : gArgs.GetArgs("-wallet")) {
-        CWallet *const pwallet = CWallet::CreateWalletFromFile(
+        std::shared_ptr<CWallet> pwallet = CWallet::CreateWalletFromFile(
             chainParams, walletFile, fs::absolute(walletFile, GetWalletDir()));
         if (!pwallet) {
             return false;
         }
-        vpwallets.push_back(pwallet);
+        AddWallet(pwallet);
     }
 
     return true;
 }
 
 void WalletInit::Start(CScheduler &scheduler) const {
-    for (CWalletRef pwallet : vpwallets) {
-        pwallet->postInitProcess(scheduler);
+    for (const std::shared_ptr<CWallet> &pwallet : GetWallets()) {
+        pwallet->postInitProcess();
     }
+
+    // Run a thread to flush wallet periodically
+    scheduler.scheduleEvery(
+        [] {
+            MaybeCompactWalletDB();
+            return true;
+        },
+        500);
 }
 
 void WalletInit::Flush() const {
-    for (CWalletRef pwallet : vpwallets) {
+    for (const std::shared_ptr<CWallet> &pwallet : GetWallets()) {
         pwallet->Flush(false);
     }
 }
 
 void WalletInit::Stop() const {
-    for (CWalletRef pwallet : vpwallets) {
+    for (const std::shared_ptr<CWallet> &pwallet : GetWallets()) {
         pwallet->Flush(true);
     }
 }
 
 void WalletInit::Close() const {
-    for (CWalletRef pwallet : vpwallets) {
-        delete pwallet;
+    for (const std::shared_ptr<CWallet> &pwallet : GetWallets()) {
+        RemoveWallet(pwallet);
     }
-    vpwallets.clear();
 }

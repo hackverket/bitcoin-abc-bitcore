@@ -25,7 +25,7 @@ class KeypoolRestoreTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        self.extra_args = [[], ['-keypool=100', '-keypoolmin=20']]
+        self.extra_args = [[], ['-keypool=100']]
 
     def run_test(self):
         wallet_path = os.path.join(
@@ -64,7 +64,7 @@ class KeypoolRestoreTest(BitcoinTestFramework):
         assert_equal(self.nodes[1].listtransactions()
                      [0]['category'], "receive")
         # Check that we have marked all keys up to the used keypool key as used
-        assert_equal(self.nodes[1].validateaddress(
+        assert_equal(self.nodes[1].getaddressinfo(
             self.nodes[1].getnewaddress())['hdkeypath'], "m/0'/0'/110'")
 
 

@@ -2,10 +2,7 @@
 # Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-#
-# Test BIP68 implementation
-#
+"""Test BIP68 implementation."""
 
 import time
 
@@ -43,7 +40,7 @@ SEQUENCE_LOCKTIME_GRANULARITY = 9
 SEQUENCE_LOCKTIME_MASK = 0x0000ffff
 
 # RPC error for non-BIP68 final transactions
-NOT_FINAL_ERROR = "64: non-BIP68-final"
+NOT_FINAL_ERROR = "non-BIP68-final (code 64)"
 
 
 class BIP68Test(BitcoinTestFramework):
@@ -403,11 +400,8 @@ class BIP68Test(BitcoinTestFramework):
         self.nodes[0].generate(10)
 
     def get_csv_status(self):
-        softforks = self.nodes[0].getblockchaininfo()['softforks']
-        for sf in softforks:
-            if sf['id'] == 'csv' and sf['version'] == 5:
-                return sf['reject']['status']
-        raise AssertionError('Cannot find CSV fork activation informations')
+        height = self.nodes[0].getblockchaininfo()['blocks']
+        return height >= 576
 
     # Make sure that BIP68 isn't being used to validate blocks, prior to
     # versionbits activation.  If more blocks are mined prior to this test

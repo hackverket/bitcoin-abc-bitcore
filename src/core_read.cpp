@@ -9,8 +9,8 @@
 #include <script/script.h>
 #include <serialize.h>
 #include <streams.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <version.h>
 
 #include <boost/algorithm/string/classification.hpp>
@@ -199,6 +199,21 @@ bool DecodeHexTx(CMutableTransaction &tx, const std::string &strHexTx) {
     return true;
 }
 
+bool DecodeHexBlockHeader(CBlockHeader &header, const std::string &hex_header) {
+    if (!IsHex(hex_header)) {
+        return false;
+    }
+
+    const std::vector<uint8_t> header_data{ParseHex(hex_header)};
+    CDataStream ser_header(header_data, SER_NETWORK, PROTOCOL_VERSION);
+    try {
+        ser_header >> header;
+    } catch (const std::exception &) {
+        return false;
+    }
+    return true;
+}
+
 bool DecodeHexBlk(CBlock &block, const std::string &strHexBlk) {
     if (!IsHex(strHexBlk)) {
         return false;
@@ -213,16 +228,6 @@ bool DecodeHexBlk(CBlock &block, const std::string &strHexBlk) {
     }
 
     return true;
-}
-
-uint256 ParseHashUV(const UniValue &v, const std::string &strName) {
-    std::string strHex;
-    if (v.isStr()) {
-        strHex = v.getValStr();
-    }
-
-    // Note: ParseHashStr("") throws a runtime_error
-    return ParseHashStr(strHex, strName);
 }
 
 uint256 ParseHashStr(const std::string &strHex, const std::string &strName) {

@@ -20,7 +20,7 @@
 #include <qt/walletmodel.h>
 #include <rpc/client.h>
 #include <rpc/server.h>
-#include <util.h>
+#include <util/system.h>
 
 #ifdef ENABLE_WALLET
 #include <wallet/wallet.h>
@@ -66,8 +66,8 @@ namespace {
 // don't add private key handling cmd's to the history
 const QStringList historyFilter = QStringList() << "importprivkey"
                                                 << "importmulti"
+                                                << "sethdseed"
                                                 << "signmessagewithprivkey"
-                                                << "signrawtransaction"
                                                 << "signrawtransactionwithkey"
                                                 << "walletpassphrase"
                                                 << "walletpassphrasechange"
@@ -97,8 +97,7 @@ private:
 class QtRPCTimerBase : public QObject, public RPCTimerBase {
     Q_OBJECT
 public:
-    QtRPCTimerBase(std::function<void(void)> &_func, int64_t millis)
-        : func(_func) {
+    QtRPCTimerBase(std::function<void()> &_func, int64_t millis) : func(_func) {
         timer.setSingleShot(true);
         connect(&timer, SIGNAL(timeout()), this, SLOT(timeout()));
         timer.start(millis);
@@ -109,14 +108,14 @@ private Q_SLOTS:
 
 private:
     QTimer timer;
-    std::function<void(void)> func;
+    std::function<void()> func;
 };
 
 class QtRPCTimerInterface : public RPCTimerInterface {
 public:
     ~QtRPCTimerInterface() {}
     const char *Name() override { return "Qt"; }
-    RPCTimerBase *NewTimer(std::function<void(void)> &func,
+    RPCTimerBase *NewTimer(std::function<void()> &func,
                            int64_t millis) override {
         return new QtRPCTimerBase(func, millis);
     }
@@ -514,9 +513,8 @@ void RPCExecutor::request(const QString &command, const QString &walletID) {
 
 RPCConsole::RPCConsole(interfaces::Node &node,
                        const PlatformStyle *_platformStyle, QWidget *parent)
-    : QWidget(parent), m_node(node), ui(new Ui::RPCConsole), clientModel(0),
-      historyPtr(0), platformStyle(_platformStyle), peersTableContextMenu(0),
-      banTableContextMenu(0), consoleFontSize(0) {
+    : QWidget(parent), m_node(node), ui(new Ui::RPCConsole),
+      platformStyle(_platformStyle) {
     ui->setupUi(this);
     QSettings settings;
     if (!restoreGeometry(
@@ -526,6 +524,11 @@ RPCConsole::RPCConsole(interfaces::Node &node,
              frameGeometry().center());
     }
 
+    QChar nonbreaking_hyphen(8209);
+    ui->dataDir->setToolTip(
+        ui->dataDir->toolTip().arg(QString(nonbreaking_hyphen) + "datadir"));
+    ui->blocksDir->setToolTip(ui->blocksDir->toolTip().arg(
+        QString(nonbreaking_hyphen) + "blocksdir"));
     ui->openDebugLogfileButton->setToolTip(
         ui->openDebugLogfileButton->toolTip().arg(tr(PACKAGE_NAME)));
 
@@ -782,6 +785,7 @@ void RPCConsole::setClientModel(ClientModel *model) {
         ui->clientVersion->setText(model->formatFullVersion());
         ui->clientUserAgent->setText(model->formatSubVersion());
         ui->dataDir->setText(model->dataDir());
+        ui->blocksDir->setText(model->blocksDir());
         ui->startupTime->setText(model->formatClientStartupTime());
         ui->networkName->setText(
             QString::fromStdString(Params().NetworkIDString()));
@@ -1387,6 +1391,7 @@ void RPCConsole::banSelectedNode(int bantime) {
             clientModel->getPeerTableModel()->getNodeStats(detailNodeRow);
         if (stats) {
             m_node.ban(stats->nodeStats.addr, BanReasonManuallyAdded, bantime);
+            m_node.disconnect(stats->nodeStats.addr);
         }
     }
     clearSelectedNode();

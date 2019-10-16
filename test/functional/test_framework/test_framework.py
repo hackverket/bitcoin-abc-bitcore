@@ -5,7 +5,7 @@
 """Base class for RPC testing."""
 
 import argparse
-from collections import deque
+import configparser
 from enum import Enum
 import logging
 import os
@@ -18,6 +18,7 @@ import time
 from .authproxy import JSONRPCException
 from . import coverage
 from .test_node import TestNode
+from .mininode import NetworkThread
 from .util import (
     assert_equal,
     check_json_precision,
@@ -69,6 +70,7 @@ class BitcoinTestFramework():
         """Sets test framework defaults. Do not override this method. Instead, override the set_test_params() method"""
         self.setup_clean_chain = False
         self.nodes = []
+        self.network_thread = None
         self.mocktime = 0
         self.supports_cli = False
         self.bind_to_localhost_only = True
@@ -81,10 +83,8 @@ class BitcoinTestFramework():
                             help="Leave bitcoinds and test.* datadir on exit or error")
         parser.add_argument("--noshutdown", dest="noshutdown", default=False, action="store_true",
                             help="Don't stop bitcoinds after the test execution")
-        parser.add_argument("--srcdir", dest="srcdir", default=os.path.normpath(os.path.dirname(os.path.realpath(__file__)) + "/../../../src"),
-                            help="Source directory containing bitcoind/bitcoin-cli (default: %(default)s)")
-        parser.add_argument("--cachedir", dest="cachedir", default=os.path.normpath(os.path.dirname(os.path.realpath(__file__)) + "/../../cache"),
-                            help="Directory for caching pregenerated datadirs")
+        parser.add_argument("--cachedir", dest="cachedir", default=os.path.abspath(os.path.dirname(os.path.realpath(__file__)) + "/../../cache"),
+                            help="Directory for caching pregenerated datadirs (default: %(default)s)")
         parser.add_argument("--tmpdir", dest="tmpdir",
                             help="Root directory for datadirs")
         parser.add_argument("-l", "--loglevel", dest="loglevel", default="INFO",
@@ -95,8 +95,8 @@ class BitcoinTestFramework():
                             help="The seed to use for assigning port numbers (default: current process id)")
         parser.add_argument("--coveragedir", dest="coveragedir",
                             help="Write tested RPC commands into this directory")
-        parser.add_argument("--configfile", dest="configfile",
-                            help="Location of the test framework config file")
+        parser.add_argument("--configfile", dest="configfile", default=os.path.abspath(os.path.dirname(os.path.realpath(
+            __file__)) + "/../../config.ini"), help="Location of the test framework config file (default: %(default)s)")
         parser.add_argument("--pdbonfailure", dest="pdbonfailure", default=False, action="store_true",
                             help="Attach a python debugger if test fails")
         parser.add_argument("--usecli", dest="usecli", default=False, action="store_true",
@@ -112,12 +112,20 @@ class BitcoinTestFramework():
 
         PortSeed.n = self.options.port_seed
 
-        os.environ['PATH'] = self.options.srcdir + ":" + \
-            self.options.srcdir + "/qt:" + os.environ['PATH']
-
         check_json_precision()
 
         self.options.cachedir = os.path.abspath(self.options.cachedir)
+
+        config = configparser.ConfigParser()
+        config.read_file(open(self.options.configfile, encoding='utf-8'))
+        self.options.bitcoind = os.getenv(
+            "BITCOIND", default=config["environment"]["BUILDDIR"] + '/src/bitcoind' + config["environment"]["EXEEXT"])
+        self.options.bitcoincli = os.getenv(
+            "BITCOINCLI", default=config["environment"]["BUILDDIR"] + '/src/bitcoin-cli' + config["environment"]["EXEEXT"])
+
+        os.environ['PATH'] = config['environment']['BUILDDIR'] + os.pathsep + \
+            config['environment']['BUILDDIR'] + os.path.sep + "qt" + os.pathsep + \
+            os.environ['PATH']
 
         # Set up temp directory and start logging
         if self.options.tmpdir:
@@ -126,6 +134,10 @@ class BitcoinTestFramework():
         else:
             self.options.tmpdir = tempfile.mkdtemp(prefix="test")
         self._start_logging()
+
+        self.log.debug('Setting up network thread')
+        self.network_thread = NetworkThread()
+        self.network_thread.start()
 
         success = TestStatus.FAILED
 
@@ -137,66 +149,60 @@ class BitcoinTestFramework():
             self.setup_network()
             self.run_test()
             success = TestStatus.PASSED
-        except JSONRPCException as e:
+        except JSONRPCException:
             self.log.exception("JSONRPC error")
         except SkipTest as e:
             self.log.warning("Test Skipped: {}".format(e.message))
             success = TestStatus.SKIPPED
-        except AssertionError as e:
+        except AssertionError:
             self.log.exception("Assertion failed")
-        except KeyError as e:
+        except KeyError:
             self.log.exception("Key error")
-        except Exception as e:
+        except Exception:
             self.log.exception("Unexpected exception caught during testing")
-        except KeyboardInterrupt as e:
+        except KeyboardInterrupt:
             self.log.warning("Exiting after keyboard interrupt")
 
         if success == TestStatus.FAILED and self.options.pdbonfailure:
             print("Testcase failed. Attaching python debugger. Enter ? for help")
             pdb.set_trace()
 
+        self.log.debug('Closing down network thread')
+        self.network_thread.close()
         if not self.options.noshutdown:
             self.log.info("Stopping nodes")
             if self.nodes:
                 self.stop_nodes()
         else:
+            for node in self.nodes:
+                node.cleanup_on_exit = False
             self.log.info(
                 "Note: bitcoinds were not stopped and may still be running")
 
         if not self.options.nocleanup and not self.options.noshutdown and success != TestStatus.FAILED:
-            self.log.info("Cleaning up")
-            shutil.rmtree(self.options.tmpdir)
+            self.log.info("Cleaning up {} on exit".format(self.options.tmpdir))
+            cleanup_tree_on_exit = True
         else:
             self.log.warning(
                 "Not cleaning up dir {}".format(self.options.tmpdir))
-            if os.getenv("PYTHON_DEBUG", ""):
-                # Dump the end of the debug logs, to aid in debugging rare
-                # travis failures.
-                import glob
-                filenames = [self.options.tmpdir + "/test_framework.log"]
-                filenames += glob.glob(self.options.tmpdir +
-                                       "/node*/regtest/debug.log")
-                MAX_LINES_TO_PRINT = 1000
-                for fn in filenames:
-                    try:
-                        with open(fn, 'r') as f:
-                            print("From", fn, ":")
-                            print("".join(deque(f, MAX_LINES_TO_PRINT)))
-                    except OSError:
-                        print("Opening file {} failed.".format(fn))
-                        traceback.print_exc()
+            cleanup_tree_on_exit = False
 
         if success == TestStatus.PASSED:
             self.log.info("Tests successful")
-            sys.exit(TEST_EXIT_PASSED)
+            exit_code = TEST_EXIT_PASSED
         elif success == TestStatus.SKIPPED:
             self.log.info("Test skipped")
-            sys.exit(TEST_EXIT_SKIPPED)
+            exit_code = TEST_EXIT_SKIPPED
         else:
             self.log.error(
                 "Test failed. Test logging available at {}/test_framework.log".format(self.options.tmpdir))
-            logging.shutdown()
-            sys.exit(TEST_EXIT_FAILED)
+            self.log.error("Hint: Call {} '{}' to consolidate all logs".format(os.path.normpath(
+                os.path.dirname(os.path.realpath(__file__)) + "/../combine_logs.py"), self.options.tmpdir))
+            exit_code = TEST_EXIT_FAILED
+        logging.shutdown()
+        if cleanup_tree_on_exit:
+            shutil.rmtree(self.options.tmpdir)
+        sys.exit(exit_code)
 
     # Methods to override in subclass test scripts.
     def set_test_params(self):
@@ -249,13 +255,13 @@ class BitcoinTestFramework():
         if extra_args is None:
             extra_args = [[]] * num_nodes
         if binary is None:
-            binary = [None] * num_nodes
+            binary = [self.options.bitcoind] * num_nodes
         assert_equal(len(extra_confs), num_nodes)
         assert_equal(len(extra_args), num_nodes)
         assert_equal(len(binary), num_nodes)
         for i in range(num_nodes):
             self.nodes.append(TestNode(i, get_datadir_path(self.options.tmpdir, i), host=rpchost, rpc_port=rpc_port(i), p2p_port=p2p_port(i), timewait=timewait,
-                                       binary=binary[i], stderr=None, mocktime=self.mocktime, coverage_dir=self.options.coveragedir, extra_conf=extra_confs[i], extra_args=extra_args[i], use_cli=self.options.usecli))
+                                       bitcoind=binary[i], bitcoin_cli=self.options.bitcoincli, mocktime=self.mocktime, coverage_dir=self.options.coveragedir, extra_conf=extra_confs[i], extra_args=extra_args[i], use_cli=self.options.usecli))
             if self.options.gravitonactivation:
                 self.nodes[i].extend_default_args(
                     ["-gravitonactivationtime={}".format(TIMESTAMP_IN_THE_PAST)])
@@ -292,9 +298,9 @@ class BitcoinTestFramework():
                 coverage.write_all_rpc_commands(
                     self.options.coveragedir, node.rpc)
 
-    def stop_node(self, i):
+    def stop_node(self, i, expected_stderr=''):
         """Stop a bitcoind test node"""
-        self.nodes[i].stop_node()
+        self.nodes[i].stop_node(expected_stderr)
         self.nodes[i].wait_until_stopped()
 
     def stop_nodes(self):
@@ -345,7 +351,8 @@ class BitcoinTestFramework():
         self.log = logging.getLogger('TestFramework')
         self.log.setLevel(logging.DEBUG)
         # Create file handler to log all messages
-        fh = logging.FileHandler(self.options.tmpdir + '/test_framework.log')
+        fh = logging.FileHandler(
+            self.options.tmpdir + '/test_framework.log', encoding='utf-8')
         fh.setLevel(logging.DEBUG)
         # Create console handler to log messages to stderr. By default this
         # logs only error messages, but can be configured with --loglevel.
@@ -397,11 +404,9 @@ class BitcoinTestFramework():
             for i in range(MAX_NODES):
                 datadir = initialize_datadir(self.options.cachedir, i)
                 self.nodes.append(TestNode(i, get_datadir_path(self.options.cachedir, i), extra_conf=["bind=127.0.0.1"], extra_args=[], host=None, rpc_port=rpc_port(
-                    i), p2p_port=p2p_port(i), timewait=None, binary=None, stderr=None, mocktime=self.mocktime, coverage_dir=None))
+                    i), p2p_port=p2p_port(i), timewait=None, bitcoind=self.options.bitcoind, bitcoin_cli=self.options.bitcoincli, mocktime=self.mocktime, coverage_dir=None))
                 self.nodes[i].clear_default_args()
-                self.nodes[i].extend_default_args([
-                    "-server", "-keypool=1", "-datadir=" + datadir,
-                    "-discover=0"])
+                self.nodes[i].extend_default_args(["-datadir=" + datadir])
                 if i > 0:
                     self.nodes[i].extend_default_args(
                         ["-connect=127.0.0.1:" + str(p2p_port(0))])
@@ -414,7 +419,7 @@ class BitcoinTestFramework():
             for node in self.nodes:
                 node.wait_for_rpc_connection()
 
-            # For backwared compatibility of the python scripts with previous
+            # For backward compatibility of the python scripts with previous
             # versions of the cache, set mocktime to Jan 1,
             # 2014 + (201 * 10 * 60)
             self.mocktime = 1388534400 + (201 * 10 * 60)
@@ -463,36 +468,6 @@ class BitcoinTestFramework():
         Useful if a test case wants complete control over initialization."""
         for i in range(self.num_nodes):
             initialize_datadir(self.options.tmpdir, i)
-
-
-class ComparisonTestFramework(BitcoinTestFramework):
-    """Test framework for doing p2p comparison testing
-
-    Sets up some bitcoind binaries:
-    - 1 binary: test binary
-    - 2 binaries: 1 test binary, 1 ref binary
-    - n>2 binaries: 1 test binary, n-1 ref binaries"""
-
-    def set_test_params(self):
-        self.num_nodes = 2
-        self.setup_clean_chain = True
-
-    def add_options(self, parser):
-        parser.add_argument("--testbinary", dest="testbinary",
-                            default=os.getenv("BITCOIND", "bitcoind"),
-                            help="bitcoind binary to test")
-        parser.add_argument("--refbinary", dest="refbinary",
-                            default=os.getenv("BITCOIND", "bitcoind"),
-                            help="bitcoind binary to use for reference nodes (if any)")
-
-    def setup_network(self):
-        extra_args = [['-whitelist=127.0.0.1']] * self.num_nodes
-        if hasattr(self, "extra_args"):
-            extra_args = self.extra_args
-        self.add_nodes(self.num_nodes, extra_args,
-                       binary=[self.options.testbinary] +
-                       [self.options.refbinary] * (self.num_nodes - 1))
-        self.start_nodes()
 
 
 class SkipTest(Exception):

@@ -2,10 +2,9 @@
 # Copyright (c) 2015-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
+"""Test the prioritisetransaction mining RPC."""
 
-#
-# Test PrioritiseTransaction code
-#
+import time
 
 from test_framework.blocktools import (
     create_confirmed_utxos,
@@ -21,8 +20,8 @@ from test_framework.util import assert_equal, assert_raises_rpc_error
 class PrioritiseTransactionTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
-        self.num_nodes = 1
-        self.extra_args = [["-printpriority=1"]]
+        self.num_nodes = 2
+        self.extra_args = [["-printpriority=1"], ["-printpriority=1"]]
 
     def run_test(self):
         self.relayfee = self.nodes[0].getnetworkinfo()['relayfee']
@@ -135,12 +134,12 @@ class PrioritiseTransactionTest(BitcoinTestFramework):
         tx2_id = self.nodes[0].decoderawtransaction(tx2_hex)["txid"]
 
         # This will raise an exception due to min relay fee not being met
-        assert_raises_rpc_error(-26, "66: insufficient priority",
+        assert_raises_rpc_error(-26, "insufficient priority (code 66)",
                                 self.nodes[0].sendrawtransaction, tx2_hex)
         assert(tx2_id not in self.nodes[0].getrawmempool())
 
         # This is a less than 1000-byte transaction, so just set the fee
-        # to be the minimum for a 1000 byte transaction and check that it is
+        # to be the minimum for a 1000-byte transaction and check that it is
         # accepted.
         self.nodes[0].prioritisetransaction(
             tx2_id, 0, int(self.relayfee * COIN))
@@ -149,6 +148,18 @@ class PrioritiseTransactionTest(BitcoinTestFramework):
             "Assert that prioritised free transaction is accepted to mempool")
         assert_equal(self.nodes[0].sendrawtransaction(tx2_hex), tx2_id)
         assert(tx2_id in self.nodes[0].getrawmempool())
+
+        # Test that calling prioritisetransaction is sufficient to trigger
+        # getblocktemplate to (eventually) return a new block.
+        mock_time = int(time.time())
+        self.nodes[0].setmocktime(mock_time)
+        template = self.nodes[0].getblocktemplate()
+        self.nodes[0].prioritisetransaction(
+            tx2_id, 0, -int(self.relayfee * COIN))
+        self.nodes[0].setmocktime(mock_time + 10)
+        new_template = self.nodes[0].getblocktemplate()
+
+        assert(template != new_template)
 
 
 if __name__ == '__main__':

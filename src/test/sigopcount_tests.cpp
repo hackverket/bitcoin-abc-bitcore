@@ -112,28 +112,28 @@ BOOST_AUTO_TEST_CASE(GetSigOpCount) {
 
 /**
  * Verifies script execution of the zeroth scriptPubKey of tx output and zeroth
- * scriptSig and witness of tx input.
+ * scriptSig of tx input.
  */
-ScriptError VerifyWithFlag(const CTransaction &output,
-                           const CMutableTransaction &input, int flags) {
+static ScriptError VerifyWithFlag(const CTransaction &output,
+                                  const CMutableTransaction &input, int flags) {
     ScriptError error;
     CTransaction inputi(input);
     bool ret = VerifyScript(
         inputi.vin[0].scriptSig, output.vout[0].scriptPubKey, flags,
         TransactionSignatureChecker(&inputi, 0, output.vout[0].nValue), &error);
-    BOOST_CHECK_EQUAL((ret == true), (error == SCRIPT_ERR_OK));
+    BOOST_CHECK_EQUAL((ret == true), (error == ScriptError::OK));
 
     return error;
 }
 
 /**
- * Builds a creationTx from scriptPubKey and a spendingTx from scriptSig and
- * witness such that spendingTx spends output zero of creationTx. Also inserts
+ * Builds a creationTx from scriptPubKey and a spendingTx from scriptSig
+ * such that spendingTx spends output zero of creationTx. Also inserts
  * creationTx's output into the coins view.
  */
-void BuildTxs(CMutableTransaction &spendingTx, CCoinsViewCache &coins,
-              CMutableTransaction &creationTx, const CScript &scriptPubKey,
-              const CScript &scriptSig) {
+static void BuildTxs(CMutableTransaction &spendingTx, CCoinsViewCache &coins,
+                     CMutableTransaction &creationTx,
+                     const CScript &scriptPubKey, const CScript &scriptSig) {
     creationTx.nVersion = 1;
     creationTx.vin.resize(1);
     creationTx.vin[0].prevout = COutPoint();
@@ -194,9 +194,8 @@ BOOST_AUTO_TEST_CASE(GetTxSigOpCost) {
             MAX_PUBKEYS_PER_MULTISIG);
         // Sanity check: script verification fails because of an invalid
         // signature.
-        BOOST_CHECK_EQUAL(
-            VerifyWithFlag(CTransaction(creationTx), spendingTx, flags),
-            SCRIPT_ERR_CHECKMULTISIGVERIFY);
+        BOOST_CHECK(VerifyWithFlag(CTransaction(creationTx), spendingTx,
+                                   flags) == ScriptError::CHECKMULTISIGVERIFY);
 
         // Make sure non P2SH sigops are counted even if the flag for P2SH is
         // not passed in.
@@ -221,9 +220,8 @@ BOOST_AUTO_TEST_CASE(GetTxSigOpCost) {
         BOOST_CHECK_EQUAL(
             GetTransactionSigOpCount(CTransaction(spendingTx), coins, flags),
             2);
-        BOOST_CHECK_EQUAL(
-            VerifyWithFlag(CTransaction(creationTx), spendingTx, flags),
-            SCRIPT_ERR_CHECKMULTISIGVERIFY);
+        BOOST_CHECK(VerifyWithFlag(CTransaction(creationTx), spendingTx,
+                                   flags) == ScriptError::CHECKMULTISIGVERIFY);
 
         // Make sure P2SH sigops are not counted if the flag for P2SH is not
         // passed in.
@@ -256,7 +254,7 @@ BOOST_AUTO_TEST_CASE(test_max_sigops_per_tx) {
     CMutableTransaction tx;
     tx.nVersion = 1;
     tx.vin.resize(1);
-    tx.vin[0].prevout = COutPoint(InsecureRand256(), 0);
+    tx.vin[0].prevout = COutPoint(TxId(InsecureRand256()), 0);
     tx.vin[0].scriptSig = CScript();
     tx.vout.resize(1);
     tx.vout[0].nValue = SATOSHI;

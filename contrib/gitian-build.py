@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -49,7 +50,8 @@ def setup():
 def build():
     global args, workdir
 
-    os.makedirs('bitcoin-binaries/' + args.version, exist_ok=True)
+    base_output_dir = 'bitcoin-binaries/' + args.version
+    os.makedirs(base_output_dir + '/src', exist_ok=True)
     print('\nBuilding Dependencies\n')
     os.chdir('gitian-builder')
     os.makedirs('inputs', exist_ok=True)
@@ -63,8 +65,11 @@ def build():
                                '--url', 'bitcoin='+args.url, '../bitcoin-abc/contrib/gitian-descriptors/gitian-linux.yml'])
         subprocess.check_call(['bin/gsign', '-p', args.sign_prog, '--signer', args.signer, '--release', args.version +
                                '-linux', '--destination', '../gitian.sigs/', '../bitcoin-abc/contrib/gitian-descriptors/gitian-linux.yml'])
+        os.makedirs('../' + base_output_dir + '/linux', exist_ok=True)
         subprocess.check_call(
-            'mv build/out/bitcoin-*.tar.gz build/out/src/bitcoin-*.tar.gz ../bitcoin-binaries/'+args.version, shell=True)
+            'mv build/out/bitcoin-*.tar.gz ../' + base_output_dir + '/linux', shell=True)
+        subprocess.check_call(
+            'mv build/out/src/bitcoin-*.tar.gz ../' + base_output_dir + '/src', shell=True)
 
     if args.windows:
         print('\nCompiling ' + args.version + ' Windows')
@@ -72,10 +77,13 @@ def build():
                                '--url', 'bitcoin='+args.url, '../bitcoin-abc/contrib/gitian-descriptors/gitian-win.yml'])
         subprocess.check_call(['bin/gsign', '-p', args.sign_prog, '--signer', args.signer, '--release', args.version +
                                '-win-unsigned', '--destination', '../gitian.sigs/', '../bitcoin-abc/contrib/gitian-descriptors/gitian-win.yml'])
+        os.makedirs('../' + base_output_dir + '/win', exist_ok=True)
         subprocess.check_call(
             'mv build/out/bitcoin-*-win-unsigned.tar.gz inputs/', shell=True)
         subprocess.check_call(
-            'mv build/out/bitcoin-*.zip build/out/bitcoin-*.exe ../bitcoin-binaries/'+args.version, shell=True)
+            'mv build/out/bitcoin-*.zip build/out/bitcoin-*.exe ../' + base_output_dir + '/win', shell=True)
+        subprocess.check_call(
+            'mv build/out/src/bitcoin-*.tar.gz ../' + base_output_dir + '/src', shell=True)
 
     if args.macos:
         print('\nCompiling ' + args.version + ' MacOS')
@@ -83,10 +91,13 @@ def build():
                                '--url', 'bitcoin='+args.url, '../bitcoin-abc/contrib/gitian-descriptors/gitian-osx.yml'])
         subprocess.check_call(['bin/gsign', '-p', args.sign_prog, '--signer', args.signer, '--release', args.version +
                                '-osx-unsigned', '--destination', '../gitian.sigs/', '../bitcoin-abc/contrib/gitian-descriptors/gitian-osx.yml'])
+        os.makedirs('../' + base_output_dir + '/osx', exist_ok=True)
         subprocess.check_call(
             'mv build/out/bitcoin-*-osx-unsigned.tar.gz inputs/', shell=True)
         subprocess.check_call(
-            'mv build/out/bitcoin-*.tar.gz build/out/bitcoin-*.dmg ../bitcoin-binaries/'+args.version, shell=True)
+            'mv build/out/bitcoin-*.tar.gz build/out/bitcoin-*.dmg ../' + base_output_dir + '/osx', shell=True)
+        subprocess.check_call(
+            'mv build/out/src/bitcoin-*.tar.gz ../' + base_output_dir + '/src', shell=True)
 
     os.chdir(workdir)
 
@@ -171,6 +182,7 @@ def verify():
 
 def main():
     global args, workdir
+    num_cpus = multiprocessing.cpu_count()
 
     parser = argparse.ArgumentParser(usage='%(prog)s [options] signer version')
     parser.add_argument('-c', '--commit', action='store_true', dest='commit',
@@ -189,9 +201,9 @@ def main():
                         dest='buildsign', help='Build both signed and unsigned binaries')
     parser.add_argument('-o', '--os', dest='os', default='lwm',
                         help='Specify which Operating Systems the build is for. Default is %(default)s. l for Linux, w for Windows, m for MacOS')
-    parser.add_argument('-j', '--jobs', dest='jobs', default='2',
+    parser.add_argument('-j', '--jobs', dest='jobs', default=str(num_cpus),
                         help='Number of processes to use. Default %(default)s')
-    parser.add_argument('-m', '--memory', dest='memory', default='2000',
+    parser.add_argument('-m', '--memory', dest='memory', default='3500',
                         help='Memory to allocate in MiB. Default %(default)s')
     parser.add_argument('-k', '--kvm', action='store_true',
                         dest='kvm', help='Use KVM instead of LXC')
@@ -261,7 +273,7 @@ def main():
     if args.setup:
         setup()
 
-    os.chdir('bitcoin')
+    os.chdir('bitcoin-abc')
     if args.pull:
         subprocess.check_call(
             ['git', 'fetch', args.url, 'refs/pull/'+args.version+'/merge'])

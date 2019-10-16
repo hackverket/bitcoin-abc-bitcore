@@ -3,12 +3,13 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chain.h>
+#include <chainparams.h>
 #include <config.h>
 #include <index/base.h>
 #include <init.h>
 #include <tinyformat.h>
 #include <ui_interface.h>
-#include <util.h>
+#include <util/system.h>
 #include <validation.h>
 #include <warnings.h>
 
@@ -56,7 +57,11 @@ bool BaseIndex::Init() {
     }
 
     LOCK(cs_main);
-    m_best_block_index = FindForkInGlobalIndex(chainActive, locator);
+    if (locator.IsNull()) {
+        m_best_block_index = nullptr;
+    } else {
+        m_best_block_index = FindForkInGlobalIndex(chainActive, locator);
+    }
     m_synced = m_best_block_index.load() == chainActive.Tip();
     return true;
 }
@@ -79,7 +84,7 @@ static const CBlockIndex *NextSyncBlock(const CBlockIndex *pindex_prev) {
 void BaseIndex::ThreadSync() {
     const CBlockIndex *pindex = m_best_block_index.load();
     if (!m_synced) {
-        auto &config = GetConfig();
+        auto &consensus_params = GetConfig().GetChainParams().GetConsensus();
 
         int64_t last_log_time = 0;
         int64_t last_locator_write_time = 0;
@@ -115,7 +120,7 @@ void BaseIndex::ThreadSync() {
             }
 
             CBlock block;
-            if (!ReadBlockFromDisk(block, pindex, config)) {
+            if (!ReadBlockFromDisk(block, pindex, consensus_params)) {
                 FatalError("%s: Failed to read block %s from disk", __func__,
                            pindex->GetBlockHash().ToString());
                 return;

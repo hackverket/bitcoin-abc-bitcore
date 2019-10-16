@@ -7,14 +7,13 @@ include(CheckIncludeFiles)
 include(CheckSymbolExists)
 include(CheckCXXSourceCompiles)
 
-# Package informations
-set(PACKAGE_NAME "Bitcoin ABC")
+# Package information
+set(PACKAGE_NAME "Bitcoin ABC" CACHE STRING "Package name")
 
 # Version
-set(CLIENT_VERSION_MAJOR 0)
-set(CLIENT_VERSION_MINOR 19)
-set(CLIENT_VERSION_REVISION 7)
-set(CLIENT_VERSION_BUILD 0)
+set(CLIENT_VERSION_MAJOR ${bitcoin-abc_VERSION_MAJOR})
+set(CLIENT_VERSION_MINOR ${bitcoin-abc_VERSION_MINOR})
+set(CLIENT_VERSION_REVISION ${bitcoin-abc_VERSION_PATCH})
 
 option(CLIENT_VERSION_IS_RELEASE "Build a release version" OFF)
 
@@ -127,6 +126,10 @@ check_symbol_exists(daemon "unistd.h" HAVE_DECL_DAEMON)
 check_symbol_exists(getentropy "unistd.h" HAVE_GETENTROPY)
 check_symbol_exists(getentropy "sys/random.h" HAVE_GETENTROPY_RAND)
 
+# getifaddrs and freeifaddrs may be unavailable with some Android versions
+check_symbol_exists(getifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_GETIFADDRS)
+check_symbol_exists(freeifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_FREEIFADDRS)
+
 check_cxx_source_compiles("
 	#include <unistd.h>  /* for syscall */
 	#include <sys/syscall.h>  /* for SYS_getrandom */
@@ -145,6 +148,36 @@ check_cxx_source_compiles("
 		return 0;
 	}
 " HAVE_SYSCTL_ARND)
+
+check_cxx_source_compiles("
+    #include <cstdint>
+    #include <type_traits>
+    int main() {
+        static_assert(std::is_same<int8_t, char>::value, \"\");
+        return 0;
+    }
+" CHAR_EQUALS_INT8)
+
+check_cxx_source_compiles("
+    #include <sys/types.h>
+    #include <type_traits>
+    int main() {
+        static_assert(sizeof(off_t) == 8, \"\");
+        return 0;
+    }
+" HAVE_LARGE_FILE_SUPPORT)
+
+check_cxx_source_compiles("
+    __attribute__((visibility(\"default\"))) int main() {
+        return 0;
+    }
+" HAVE_FUNC_ATTRIBUTE_VISIBILITY)
+
+check_cxx_source_compiles("
+    __declspec(dllexport) int main() {
+        return 0;
+    }
+" HAVE_FUNC_ATTRIBUTE_DLLEXPORT)
 
 # OpenSSL functionality
 set(CMAKE_REQUIRED_INCLUDES ${OPENSSL_CRYPTO_INCLUDES})

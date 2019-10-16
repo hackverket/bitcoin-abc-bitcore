@@ -34,12 +34,11 @@ class HelpMessageDialog;
 class ModalOverlay;
 
 class Config;
-class CWallet;
 
 namespace interfaces {
 class Handler;
 class Node;
-}
+} // namespace interfaces
 
 QT_BEGIN_NAMESPACE
 class QAction;

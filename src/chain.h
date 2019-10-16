@@ -10,8 +10,7 @@
 #include <blockstatus.h>
 #include <blockvalidity.h>
 #include <consensus/params.h>
-#include <diskblockpos.h>
-#include <pow.h>
+#include <flatfile.h>
 #include <primitives/block.h>
 #include <sync.h>
 #include <tinyformat.h>
@@ -24,7 +23,7 @@
  * Maximum amount of time that a block timestamp is allowed to exceed the
  * current network-adjusted time before the block will be accepted.
  */
-static const int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
+static constexpr int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
 
 /**
  * Timestamp window used as a grace period by code that compares external
@@ -32,7 +31,15 @@ static const int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
  * to block timestamps. This should be set at least as high as
  * MAX_FUTURE_BLOCK_TIME.
  */
-static const int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
+static constexpr int64_t TIMESTAMP_WINDOW = MAX_FUTURE_BLOCK_TIME;
+
+/**
+ * Maximum gap between node time and block time used
+ * for the "Catching up..." mode in GUI.
+ *
+ * Ref: https://github.com/bitcoin/bitcoin/pull/1026
+ */
+static constexpr int64_t MAX_BLOCK_TIME_GAP = 90 * 60;
 
 /**
  * The block chain is a tree shaped structure starting with the genesis block at
@@ -136,8 +143,8 @@ public:
         nNonce = block.nNonce;
     }
 
-    CDiskBlockPos GetBlockPos() const {
-        CDiskBlockPos ret;
+    FlatFilePos GetBlockPos() const {
+        FlatFilePos ret;
         if (nStatus.hasData()) {
             ret.nFile = nFile;
             ret.nPos = nDataPos;
@@ -145,8 +152,8 @@ public:
         return ret;
     }
 
-    CDiskBlockPos GetUndoPos() const {
-        CDiskBlockPos ret;
+    FlatFilePos GetUndoPos() const {
+        FlatFilePos ret;
         if (nStatus.hasUndo()) {
             ret.nFile = nFile;
             ret.nPos = nUndoPos;
@@ -288,14 +295,14 @@ public:
     inline void SerializationOp(Stream &s, Operation ser_action) {
         int _nVersion = s.GetVersion();
         if (!(s.GetType() & SER_GETHASH)) {
-            READWRITE(VARINT(_nVersion));
+            READWRITE(VARINT(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
         }
 
-        READWRITE(VARINT(nHeight));
+        READWRITE(VARINT(nHeight, VarIntMode::NONNEGATIVE_SIGNED));
         READWRITE(nStatus);
         READWRITE(VARINT(nTx));
         if (nStatus.hasData() || nStatus.hasUndo()) {
-            READWRITE(VARINT(nFile));
+            READWRITE(VARINT(nFile, VarIntMode::NONNEGATIVE_SIGNED));
         }
         if (nStatus.hasData()) {
             READWRITE(VARINT(nDataPos));

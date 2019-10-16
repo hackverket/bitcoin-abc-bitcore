@@ -6,11 +6,12 @@
 
 #include <chainparams.h>
 
+#include <chainparamsconstants.h>
 #include <chainparamsseeds.h>
 #include <consensus/merkle.h>
 #include <tinyformat.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <cassert>
 
@@ -83,6 +84,9 @@ public:
     CMainParams() {
         strNetworkID = "main";
         consensus.nSubsidyHalvingInterval = 210000;
+        // 00000000000000ce80a7e057163a4db1d5ad7b20fb6f598c9597b9665c8fb0d4 -
+        // April 1, 2012
+        consensus.BIP16Height = 173805;
         consensus.BIP34Height = 227931;
         consensus.BIP34Hash = uint256S(
             "000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8");
@@ -99,26 +103,15 @@ public:
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
-        // 95% of 2016
-        consensus.nRuleChangeActivationThreshold = 1916;
-        // nPowTargetTimespan / nPowTargetSpacing
-        consensus.nMinerConfirmationWindow = 2016;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
-        // January 1, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime =
-            1199145601;
-        // December 31, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout =
-            1230767999;
 
         // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S(
-            "000000000000000000000000000000000000000000ed8fb94eee97fc15788cdc");
+        consensus.nMinimumChainWork =
+            ChainParamsConstants::MAINNET_MINIMUM_CHAIN_WORK;
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
-        consensus.defaultAssumeValid = uint256S(
-            "00000000000000000007e98373dc6f69a89011192b39094cf72ff15f993bd147");
+        consensus.defaultAssumeValid =
+            ChainParamsConstants::MAINNET_DEFAULT_ASSUME_VALID;
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 478558;
@@ -129,11 +122,11 @@ public:
         // November 15, 2018 hard fork
         consensus.magneticAnomalyHeight = 556766;
 
-        // Wed, 15 May 2019 12:00:00 UTC hard fork
-        consensus.greatWallActivationTime = 1557921600;
-
         // Nov 15, 2019 12:00:00 UTC protocol upgrade
         consensus.gravitonActivationTime = 1573819200;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononActivationTime = 1589544000;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -176,8 +169,8 @@ public:
         vSeeds.emplace_back("seed.bitprim.org");
         // Amaury SÉCHET
         vSeeds.emplace_back("seed.deadalnix.me");
-        // criptolayer.net
-        vSeeds.emplace_back("seeder.criptolayer.net");
+        // BCHD
+        vSeeds.emplace_back("seed.bchd.cash");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 5);
@@ -260,6 +253,8 @@ public:
     CTestNetParams() {
         strNetworkID = "test";
         consensus.nSubsidyHalvingInterval = 210000;
+        // 00000000040b4e986385315e14bee30ad876d8b47f748025b26683116d21aa65
+        consensus.BIP16Height = 514;
         consensus.BIP34Height = 21111;
         consensus.BIP34Hash = uint256S(
             "0000000023b3a96d3484e5abb3755c413e7d41500f8e2a5c3f0dd01299cd8ef8");
@@ -276,26 +271,15 @@ public:
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = false;
-        // 75% for testchains
-        consensus.nRuleChangeActivationThreshold = 1512;
-        // nPowTargetTimespan / nPowTargetSpacing
-        consensus.nMinerConfirmationWindow = 2016;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
-        // January 1, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime =
-            1199145601;
-        // December 31, 2008
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout =
-            1230767999;
 
         // The best chain should have at least this much work.
-        consensus.nMinimumChainWork = uint256S(
-            "00000000000000000000000000000000000000000000004c83317c9efa4724bd");
+        consensus.nMinimumChainWork =
+            ChainParamsConstants::TESTNET_MINIMUM_CHAIN_WORK;
 
         // By default assume that the signatures in ancestors of this block are
         // valid.
-        consensus.defaultAssumeValid = uint256S(
-            "00000000000000479138892ef0e4fa478ccc938fb94df862ef5bde7e8dee23d3");
+        consensus.defaultAssumeValid =
+            ChainParamsConstants::TESTNET_DEFAULT_ASSUME_VALID;
 
         // August 1, 2017 hard fork
         consensus.uahfHeight = 1155875;
@@ -306,11 +290,11 @@ public:
         // November 15, 2018 hard fork
         consensus.magneticAnomalyHeight = 1267996;
 
-        // Wed, 15 May 2019 12:00:00 UTC hard fork
-        consensus.greatWallActivationTime = 1557921600;
-
         // Nov 15, 2019 12:00:00 UTC protocol upgrade
         consensus.gravitonActivationTime = 1573819200;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononActivationTime = 1589544000;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -344,8 +328,6 @@ public:
         vSeeds.emplace_back("testnet-seed.bitprim.org");
         // Amaury SÉCHET
         vSeeds.emplace_back("testnet-seed.deadalnix.me");
-        // criptolayer.net
-        vSeeds.emplace_back("testnet-seeder.criptolayer.net");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 111);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 196);
@@ -390,6 +372,8 @@ public:
     CRegTestParams() {
         strNetworkID = "regtest";
         consensus.nSubsidyHalvingInterval = 150;
+        // always enforce P2SH BIP16 on regtest
+        consensus.BIP16Height = 0;
         // BIP34 has not activated on regtest (far in the future so block v1 are
         // not rejected in tests)
         consensus.BIP34Height = 100000000;
@@ -407,14 +391,6 @@ public:
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = true;
-        // 75% for testchains
-        consensus.nRuleChangeActivationThreshold = 108;
-        // Faster than normal for regtest (144 instead of 2016)
-        consensus.nMinerConfirmationWindow = 144;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = 0;
-        consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout =
-            999999999999ULL;
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");
@@ -432,11 +408,11 @@ public:
         // November 15, 2018 hard fork is always on on regtest.
         consensus.magneticAnomalyHeight = 0;
 
-        // Wed, 15 May 2019 12:00:00 UTC hard fork
-        consensus.greatWallActivationTime = 1557921600;
-
         // Nov 15, 2019 12:00:00 UTC protocol upgrade
         consensus.gravitonActivationTime = 1573819200;
+
+        // May 15, 2020 12:00:00 UTC protocol upgrade
+        consensus.phononActivationTime = 1589544000;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;

@@ -20,7 +20,12 @@ class SpentIndexTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.setup_clean_chain = True
-        self.extra_args = [["-debug"],["-debug", "-spentindex"],["-debug", "-spentindex"], ["-debug", "-spentindex", "-txindex"]]
+        self.extra_args = [
+            ["-debug"],
+            ["-debug", "-spentindex", "-usecashaddr=0"],
+            ["-debug", "-spentindex"],
+            ["-debug", "-spentindex", "-txindex", "-usecashaddr=0"]
+        ]
 
     def setup_network(self):
         self.setup_nodes()

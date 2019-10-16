@@ -5,7 +5,7 @@
 
 #include <rpc/client.h>
 #include <rpc/protocol.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <cstdint>
 #include <set>
@@ -36,6 +36,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"sendtoaddress", 1, "amount"},
     {"sendtoaddress", 4, "subtractfeefromamount"},
     {"settxfee", 0, "amount"},
+    {"sethdseed", 0, "newkeypool"},
     {"getreceivedbyaddress", 1, "minconf"},
     {"getreceivedbyaccount", 1, "minconf"},
     {"getreceivedbylabel", 1, "minconf"},
@@ -80,8 +81,10 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"listunspent", 0, "minconf"},
     {"listunspent", 1, "maxconf"},
     {"listunspent", 2, "addresses"},
+    {"listunspent", 3, "include_unsafe"},
     {"listunspent", 4, "query_options"},
     {"getblock", 1, "verbosity"},
+    {"getblock", 1, "verbose"},
     {"getblockheader", 1, "verbose"},
     {"getchaintxstats", 0, "nblocks"},
     {"gettransaction", 1, "include_watchonly"},
@@ -89,8 +92,6 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"createrawtransaction", 0, "inputs"},
     {"createrawtransaction", 1, "outputs"},
     {"createrawtransaction", 2, "locktime"},
-    {"signrawtransaction", 1, "prevtxs"},
-    {"signrawtransaction", 2, "privkeys"},
     {"signrawtransactionwithkey", 1, "privkeys"},
     {"signrawtransactionwithkey", 2, "prevtxs"},
     {"signrawtransactionwithwallet", 1, "prevtxs"},
@@ -113,6 +114,8 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"importmulti", 1, "options"},
     {"verifychain", 0, "checklevel"},
     {"verifychain", 1, "nblocks"},
+    {"getblockstats", 0, "hash_or_height"},
+    {"getblockstats", 1, "stats"},
     {"pruneblockchain", 0, "height"},
     {"keypoolrefill", 0, "newsize"},
     {"getrawmempool", 0, "verbose"},
@@ -215,7 +218,7 @@ UniValue RPCConvertNamedValues(const std::string &strMethod,
     UniValue params(UniValue::VOBJ);
 
     for (const std::string &s : strParams) {
-        size_t pos = s.find("=");
+        size_t pos = s.find('=');
         if (pos == std::string::npos) {
             throw(std::runtime_error("No '=' in named argument '" + s +
                                      "', this needs to be present for every "

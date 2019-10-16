@@ -16,9 +16,9 @@ import sys
 FALSE_POSITIVES = [
     ("src/dbwrapper.cpp", "vsnprintf(p, limit - p, format, backup_ap)"),
     ("src/index/base.cpp", "FatalError(const char *fmt, const Args &... args)"),
-    ("src/netbase.cpp", "LogConnectFailure(bool manual_connection, const char* fmt, const Args&... args)"),
-    ("src/util.cpp", "strprintf(_(COPYRIGHT_HOLDERS), _(COPYRIGHT_HOLDERS_SUBSTITUTION))"),
-    ("src/util.cpp", "strprintf(COPYRIGHT_HOLDERS, COPYRIGHT_HOLDERS_SUBSTITUTION)"),
+    ("src/netbase.cpp", "LogConnectFailure(bool manual_connection, const char *fmt, const Args &... args)"),
+    ("src/util/system.cpp",
+     "strprintf(_(COPYRIGHT_HOLDERS), _(COPYRIGHT_HOLDERS_SUBSTITUTION))"),
     ("src/seeder/main.cpp", "fprintf(stderr, help, argv[0])"),
     ("src/tinyformat.h", "printf(const char *fmt, const Args &... args)"),
     ("src/tinyformat.h", "printf(const char *fmt, TINYFORMAT_VARARGS(n))"),
@@ -74,7 +74,7 @@ def normalize(s):
     assert(type(s) is str)
     s = s.replace("\n", " ")
     s = s.replace("\t", " ")
-    s = re.sub("/\*.*?\*/", " ", s)
+    s = re.sub(r"/\*.*?\*/", " ", s)
     s = re.sub(" {2,}", " ", s)
     return s.strip()
 

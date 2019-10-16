@@ -3,12 +3,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <base58.h>
 #include <chain.h>
 #include <clientversion.h>
 #include <config.h>
-#include <dstencode.h>
+#include <core_io.h>
 #include <init.h>
+#include <key_io.h>
 #include <net.h>
 #include <netbase.h>
 #include <rpc/blockchain.h>
@@ -16,10 +16,11 @@
 #include <rpc/server.h>
 #include <rpc/util.h>
 #include <timedata.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <validation.h>
 #include <txmempool.h>
+#include <index/indexutil.h>
 #ifdef ENABLE_WALLET
 #include <wallet/rpcwallet.h>
 #include <wallet/wallet.h>
@@ -34,196 +35,6 @@
 #include <malloc.h>
 #endif
 
-/**
- * @note Do not add or change anything in the information returned by this
- * method. `getinfo` exists for backwards-compatibility only. It combines
- * information from wildly different sources in the program, which is a mess,
- * and is thus planned to be deprecated eventually.
- *
- * Based on the source of the information, new information should be added to:
- * - `getblockchaininfo`,
- * - `getnetworkinfo` or
- * - `getwalletinfo`
- *
- * Or alternatively, create a specific query method for the information.
- **/
-static UniValue getinfo(const Config &config, const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() != 0) {
-        throw std::runtime_error(
-            "getinfo\n"
-            "\nDEPRECATED. Returns an object containing various state info.\n"
-            "\nResult:\n"
-            "{\n"
-            "  \"version\": xxxxx,           (numeric) the server version\n"
-            "  \"protocolversion\": xxxxx,   (numeric) the protocol version\n"
-            "  \"walletversion\": xxxxx,     (numeric) the wallet version\n"
-            "  \"balance\": xxxxxxx,         (numeric) the total bitcoin "
-            "balance of the wallet\n"
-            "  \"blocks\": xxxxxx,           (numeric) the current number of "
-            "blocks processed in the server\n"
-            "  \"timeoffset\": xxxxx,        (numeric) the time offset\n"
-            "  \"connections\": xxxxx,       (numeric) the number of "
-            "connections\n"
-            "  \"proxy\": \"host:port\",     (string, optional) the proxy used "
-            "by the server\n"
-            "  \"difficulty\": xxxxxx,       (numeric) the current difficulty\n"
-            "  \"testnet\": true|false,      (boolean) if the server is using "
-            "testnet or not\n"
-            "  \"keypoololdest\": xxxxxx,    (numeric) the timestamp (seconds "
-            "since Unix epoch) of the oldest pre-generated key in the key "
-            "pool\n"
-            "  \"keypoolsize\": xxxx,        (numeric) how many new keys are "
-            "pre-generated\n"
-            "  \"unlocked_until\": ttt,      (numeric) the timestamp in "
-            "seconds since epoch (midnight Jan 1 1970 GMT) that the wallet is "
-            "unlocked for transfers, or 0 if the wallet is locked\n"
-            "  \"paytxfee\": x.xxxx,         (numeric) the transaction fee set "
-            "in " +
-            CURRENCY_UNIT +
-            "/kB\n"
-            "  \"relayfee\": x.xxxx,         (numeric) minimum relay fee for "
-            "non-free transactions in " +
-            CURRENCY_UNIT +
-            "/kB\n"
-            "  \"errors\": \"...\"           (string) any error messages\n"
-            "}\n"
-            "\nExamples:\n" +
-            HelpExampleCli("getinfo", "") + HelpExampleRpc("getinfo", ""));
-    }
-
-#ifdef ENABLE_WALLET
-    CWallet *const pwallet = GetWalletForJSONRPCRequest(request);
-
-    LOCK2(cs_main, pwallet ? &pwallet->cs_wallet : nullptr);
-#else
-    LOCK(cs_main);
-#endif
-
-    proxyType proxy;
-    GetProxy(NET_IPV4, proxy);
-
-    UniValue obj(UniValue::VOBJ);
-    obj.pushKV("version", CLIENT_VERSION);
-    obj.pushKV("protocolversion", PROTOCOL_VERSION);
-#ifdef ENABLE_WALLET
-    if (pwallet) {
-        obj.pushKV("walletversion", pwallet->GetVersion());
-        obj.pushKV("balance", ValueFromAmount(pwallet->GetBalance()));
-    }
-#endif
-    obj.pushKV("blocks", (int)chainActive.Height());
-    obj.pushKV("timeoffset", GetTimeOffset());
-    if (g_connman) {
-        obj.pushKV("connections",
-                   (int)g_connman->GetNodeCount(CConnman::CONNECTIONS_ALL));
-    }
-    obj.pushKV("proxy", (proxy.IsValid() ? proxy.proxy.ToStringIPPort()
-                                         : std::string()));
-    obj.pushKV("difficulty", double(GetDifficulty(chainActive.Tip())));
-    obj.pushKV("testnet", config.GetChainParams().NetworkIDString() ==
-                              CBaseChainParams::TESTNET);
-#ifdef ENABLE_WALLET
-    if (pwallet) {
-        obj.pushKV("keypoololdest", pwallet->GetOldestKeyPoolTime());
-        obj.pushKV("keypoolsize", (int)pwallet->GetKeyPoolSize());
-    }
-    if (pwallet && pwallet->IsCrypted()) {
-        obj.pushKV("unlocked_until", pwallet->nRelockTime);
-    }
-    obj.pushKV("paytxfee", ValueFromAmount(payTxFee.GetFeePerK()));
-#endif
-    obj.pushKV("relayfee",
-               ValueFromAmount(config.GetMinFeePerKB().GetFeePerK()));
-    obj.pushKV("errors", GetWarnings("statusbar"));
-    return obj;
-}
-
-#ifdef ENABLE_WALLET
-class DescribeAddressVisitor : public boost::static_visitor<UniValue> {
-public:
-    CWallet *const pwallet;
-
-    explicit DescribeAddressVisitor(CWallet *_pwallet) : pwallet(_pwallet) {}
-
-    void ProcessSubScript(const CScript &subscript, UniValue &obj,
-                          bool include_addresses = false) const {
-        // Always present: script type and redeemscript
-        txnouttype which_type;
-        std::vector<std::vector<unsigned char>> solutions_data;
-        Solver(subscript, which_type, solutions_data);
-        obj.pushKV("script", GetTxnOutputType(which_type));
-        obj.pushKV("hex", HexStr(subscript.begin(), subscript.end()));
-
-        CTxDestination embedded;
-        UniValue a(UniValue::VARR);
-        if (ExtractDestination(subscript, embedded)) {
-            // Only when the script corresponds to an address.
-            UniValue subobj = boost::apply_visitor(*this, embedded);
-            subobj.pushKV("address", EncodeDestination(embedded));
-            subobj.pushKV("scriptPubKey",
-                          HexStr(subscript.begin(), subscript.end()));
-            // Always report the pubkey at the top level, so that
-            // `getnewaddress()['pubkey']` always works.
-            if (subobj.exists("pubkey")) {
-                obj.pushKV("pubkey", subobj["pubkey"]);
-            }
-            obj.pushKV("embedded", std::move(subobj));
-            if (include_addresses) {
-                a.push_back(EncodeDestination(embedded));
-            }
-        } else if (which_type == TX_MULTISIG) {
-            // Also report some information on multisig scripts (which do not
-            // have a corresponding address).
-            // TODO: abstract out the common functionality between this logic
-            // and ExtractDestinations.
-            obj.pushKV("sigsrequired", solutions_data[0][0]);
-            UniValue pubkeys(UniValue::VARR);
-            for (size_t i = 1; i < solutions_data.size() - 1; ++i) {
-                CPubKey key(solutions_data[i].begin(), solutions_data[i].end());
-                if (include_addresses) {
-                    a.push_back(EncodeDestination(key.GetID()));
-                }
-                pubkeys.push_back(HexStr(key.begin(), key.end()));
-            }
-            obj.pushKV("pubkeys", std::move(pubkeys));
-        }
-
-        // The "addresses" field is confusing because it refers to public keys
-        // using their P2PKH address. For that reason, only add the 'addresses'
-        // field when needed for backward compatibility. New applications can
-        // use the 'pubkeys' field for inspecting multisig participants.
-        if (include_addresses) {
-            obj.pushKV("addresses", std::move(a));
-        }
-    }
-
-    UniValue operator()(const CNoDestination &dest) const {
-        return UniValue(UniValue::VOBJ);
-    }
-
-    UniValue operator()(const CKeyID &keyID) const {
-        UniValue obj(UniValue::VOBJ);
-        CPubKey vchPubKey;
-        obj.pushKV("isscript", false);
-        if (pwallet && pwallet->GetPubKey(keyID, vchPubKey)) {
-            obj.pushKV("pubkey", HexStr(vchPubKey));
-            obj.pushKV("iscompressed", vchPubKey.IsCompressed());
-        }
-        return obj;
-    }
-
-    UniValue operator()(const CScriptID &scriptID) const {
-        UniValue obj(UniValue::VOBJ);
-        CScript subscript;
-        obj.pushKV("isscript", true);
-        if (pwallet && pwallet->GetCScript(scriptID, subscript)) {
-            ProcessSubScript(subscript, obj, true);
-        }
-        return obj;
-    }
-};
-#endif
-
 static UniValue validateaddress(const Config &config,
                                 const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() != 1) {
@@ -231,8 +42,8 @@ static UniValue validateaddress(const Config &config,
             "validateaddress \"address\"\n"
             "\nReturn information about the given bitcoin address.\n"
             "\nArguments:\n"
-            "1. \"address\"     (string, required) The bitcoin address to "
-            "validate\n"
+            "1. \"address\"                    (string, required) The bitcoin "
+            "address to validate\n"
             "\nResult:\n"
             "{\n"
             "  \"isvalid\" : true|false,       (boolean) If the address is "
@@ -241,48 +52,8 @@ static UniValue validateaddress(const Config &config,
             "validated\n"
             "  \"scriptPubKey\" : \"hex\",       (string) The hex encoded "
             "scriptPubKey generated by the address\n"
-            "  \"ismine\" : true|false,        (boolean) If the address is "
-            "yours or not\n"
-            "  \"iswatchonly\" : true|false,   (boolean) If the address is "
-            "watchonly\n"
-            "  \"isscript\" : true|false,      (boolean, optional) If the key "
-            "is a script.\n"
-            "  \"script\" : \"type\"             (string, optional) The output "
-            "script type. Only if \"isscript\" is true and the redeemscript is "
-            "known. Possible types: nonstandard, pubkey, pubkeyhash, "
-            "scripthash, multisig, nulldata\n"
-            "  \"hex\" : \"hex\",                (string, optional) The "
-            "redeemscript for the P2SH address\n"
-            "  \"pubkeys\"                     (string, optional) Array of "
-            "pubkeys associated with the known redeemscript (only if "
-            "\"script\" is \"multisig\")\n"
-            "    [\n"
-            "      \"pubkey\"\n"
-            "      ,...\n"
-            "    ]\n"
-            "  \"sigsrequired\" : xxxxx        (numeric, optional) Number of "
-            "signatures required to spend multisig output (only if \"script\" "
-            "is \"multisig\")\n"
-            "  \"pubkey\" : \"publickeyhex\",    (string, optional) The hex "
-            "value of the raw public key, for single-key addresses (possibly "
-            "embedded in P2SH)\n"
-            "  \"embedded\" : {...},           (object, optional) information "
-            "about the address embedded in P2SH, if relevant and known. It "
-            "includes all validateaddress output fields for the embedded "
-            "address, excluding \"isvalid\", metadata (\"timestamp\", "
-            "\"hdkeypath\", \"hdmasterkeyid\") and relation to the wallet "
-            "(\"ismine\", \"iswatchonly\", \"account\").\n"
-            "  \"iscompressed\" : true|false,  (boolean) If the address is "
-            "compressed\n"
-            "  \"account\" : \"account\"         (string) DEPRECATED. The "
-            "account associated with the address, \"\" is the default account\n"
-            "  \"timestamp\" : timestamp,        (number, optional) The "
-            "creation time of the key if available in seconds since epoch (Jan "
-            "1 1970 GMT)\n"
-            "  \"hdkeypath\" : \"keypath\"       (string, optional) The HD "
-            "keypath if the key is HD and available\n"
-            "  \"hdmasterkeyid\" : \"<hash160>\" (string, optional) The "
-            "Hash160 of the HD master pubkey\n"
+            "  \"isscript\" : true|false,      (boolean) If the key is a "
+            "script\n"
             "}\n"
             "\nExamples:\n" +
             HelpExampleCli("validateaddress",
@@ -291,63 +62,25 @@ static UniValue validateaddress(const Config &config,
                            "\"1PSSGeFHDnKNxiEyFrD1wcEaHr9hrQDDWc\""));
     }
 
-#ifdef ENABLE_WALLET
-    CWallet *const pwallet = GetWalletForJSONRPCRequest(request);
-
-    LOCK2(cs_main, pwallet ? &pwallet->cs_wallet : nullptr);
-#else
-    LOCK(cs_main);
-#endif
-
     CTxDestination dest =
         DecodeDestination(request.params[0].get_str(), config.GetChainParams());
     bool isValid = IsValidDestination(dest);
 
     UniValue ret(UniValue::VOBJ);
     ret.pushKV("isvalid", isValid);
+
     if (isValid) {
-        std::string currentAddress = EncodeDestination(dest);
-        ret.pushKV("address", currentAddress);
+        if (ret["address"].isNull()) {
+            std::string currentAddress = EncodeDestination(dest, config);
+            ret.pushKV("address", currentAddress);
 
-        CScript scriptPubKey = GetScriptForDestination(dest);
-        ret.pushKV("scriptPubKey",
-                   HexStr(scriptPubKey.begin(), scriptPubKey.end()));
+            CScript scriptPubKey = GetScriptForDestination(dest);
+            ret.pushKV("scriptPubKey",
+                       HexStr(scriptPubKey.begin(), scriptPubKey.end()));
 
-#ifdef ENABLE_WALLET
-        isminetype mine = pwallet ? IsMine(*pwallet, dest) : ISMINE_NO;
-        ret.pushKV("ismine", bool(mine & ISMINE_SPENDABLE));
-        ret.pushKV("iswatchonly", bool(mine & ISMINE_WATCH_ONLY));
-        UniValue detail =
-            boost::apply_visitor(DescribeAddressVisitor(pwallet), dest);
-        ret.pushKVs(detail);
-        if (pwallet && pwallet->mapAddressBook.count(dest)) {
-            ret.pushKV("account", pwallet->mapAddressBook[dest].name);
+            UniValue detail = DescribeAddress(dest);
+            ret.pushKVs(detail);
         }
-        if (pwallet) {
-            const CKeyMetadata *meta = nullptr;
-            CKeyID key_id = GetKeyForDestination(*pwallet, dest);
-            if (!key_id.IsNull()) {
-                auto it = pwallet->mapKeyMetadata.find(key_id);
-                if (it != pwallet->mapKeyMetadata.end()) {
-                    meta = &it->second;
-                }
-            }
-            if (!meta) {
-                auto it =
-                    pwallet->m_script_metadata.find(CScriptID(scriptPubKey));
-                if (it != pwallet->m_script_metadata.end()) {
-                    meta = &it->second;
-                }
-            }
-            if (meta) {
-                ret.pushKV("timestamp", meta->nCreateTime);
-                if (!meta->hdKeypath.empty()) {
-                    ret.pushKV("hdkeypath", meta->hdKeypath);
-                    ret.pushKV("hdmasterkeyid", meta->hdMasterKeyID.GetHex());
-                }
-            }
-        }
-#endif
     }
     return ret;
 }
@@ -364,15 +97,9 @@ static UniValue createmultisig(const Config &config,
             "\nCreates a multi-signature address with n signature of m keys "
             "required.\n"
             "It returns a json object with the address and redeemScript.\n"
-            "DEPRECATION WARNING: Using addresses with createmultisig is "
-            "deprecated. Clients must\n"
-            "transition to using addmultisigaddress to create multisig "
-            "addresses with addresses known\n"
-            "to the wallet before upgrading to v0.20. To use the deprecated "
-            "functionality, start bitcoind with -deprecatedrpc=createmultisig\n"
             "\nArguments:\n"
             "1. nrequired      (numeric, required) The number of required "
-            "signatures out of the n keys or addresses.\n"
+            "signatures out of the n keys.\n"
             "2. \"keys\"       (string, required) A json array of hex-encoded "
             "public keys\n"
             "     [\n"
@@ -418,25 +145,9 @@ static UniValue createmultisig(const Config &config,
                                          keys[i].get_str().length() == 130)) {
             pubkeys.push_back(HexToPubKey(keys[i].get_str()));
         } else {
-#ifdef ENABLE_WALLET
-            CWallet *const pwallet = GetWalletForJSONRPCRequest(request);
-            if (IsDeprecatedRPCEnabled(gArgs, "createmultisig") &&
-                EnsureWalletIsAvailable(pwallet, false)) {
-                pubkeys.push_back(AddrToPubKey(config.GetChainParams(), pwallet,
-                                               keys[i].get_str()));
-            } else
-#endif
-                throw JSONRPCError(
-                    RPC_INVALID_ADDRESS_OR_KEY,
-                    strprintf("Invalid public key: %s\nNote that from v0.19.6, "
-                              "createmultisig no longer accepts addresses."
-                              " Clients must transition to using "
-                              "addmultisigaddress to create multisig addresses "
-                              "with addresses known to the wallet before "
-                              "upgrading to v0.20."
-                              " To use the deprecated functionality, start "
-                              "bitcoind with -deprecatedrpc=createmultisig",
-                              keys[i].get_str()));
+            throw JSONRPCError(
+                RPC_INVALID_ADDRESS_OR_KEY,
+                strprintf("Invalid public key: %s\n", keys[i].get_str()));
         }
     }
 
@@ -445,7 +156,7 @@ static UniValue createmultisig(const Config &config,
     CScriptID innerID(inner);
 
     UniValue result(UniValue::VOBJ);
-    result.pushKV("address", EncodeDestination(innerID));
+    result.pushKV("address", EncodeDestination(innerID, config));
     result.pushKV("redeemScript", HexStr(inner.begin(), inner.end()));
 
     return result;
@@ -550,15 +261,9 @@ static UniValue signmessagewithprivkey(const Config &config,
     std::string strPrivkey = request.params[0].get_str();
     std::string strMessage = request.params[1].get_str();
 
-    CBitcoinSecret vchSecret;
-    bool fGood = vchSecret.SetString(strPrivkey);
-    if (!fGood) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
-    }
-    CKey key = vchSecret.GetKey();
+    CKey key = DecodeSecret(strPrivkey);
     if (!key.IsValid()) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                           "Private key outside allowed range");
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key");
     }
 
     CHashWriter ss(SER_GETHASH, 0);
@@ -570,7 +275,7 @@ static UniValue signmessagewithprivkey(const Config &config,
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Sign failed");
     }
 
-    return EncodeBase64(&vchSig[0], vchSig.size());
+    return EncodeBase64(vchSig.data(), vchSig.size());
 }
 
 static UniValue setmocktime(const Config &config,
@@ -707,34 +412,37 @@ static UniValue echo(const Config &config, const JSONRPCRequest &request) {
     return request.params;
 }
 
-bool getAddressFromIndex(const int &type, const uint160 &hash, std::string &address)
+static bool getAddressFromIndex(const int &type, const uint160 &hash,
+        std::string &address, const Config& config)
 {
-    if (type == 2) {
-        address = CBitcoinAddress(CScriptID(hash)).ToString();
-    } else if (type == 1) {
-        address = CBitcoinAddress(CKeyID(hash)).ToString();
+    if (type == ADDRESSTYPE_P2SH) {
+        address = EncodeDestination(CScriptID(hash), config);
+    } else if (type == ADDRESSTYPE_P2PKH) {
+        address = EncodeDestination(CKeyID(hash), config);
     } else {
         return false;
     }
     return true;
 }
 
-bool getAddressesFromParams(const UniValue& params, std::vector<std::pair<uint160, int> > &addresses)
+static bool getAddressesFromParams(
+    const UniValue& params,
+    std::vector<std::pair<uint160, int> > &addresses)
 {
     if (params[0].isStr()) {
         CTxDestination dest = DecodeDestination(params[0].get_str(), Params());
-        bool isValid = IsValidDestination(dest);
-        if (!isValid) {
+
+        if (!IsValidDestination(dest)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
         }
-        CBitcoinAddress address(EncodeLegacyAddr(dest, Params()));
-        uint160 hashBytes;
-        int type = 0;
-        if (!address.GetIndexKey(hashBytes, type)) {
+
+        auto decoded = GetHashAndAddressType(dest);
+        if (decoded.second == ADDRESSTYPE_UNKNOWN) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
         }
-        addresses.push_back(std::make_pair(hashBytes, type));
-    } else if (params[0].isObject()) {
+        addresses.push_back(decoded);
+    }
+    else if (params[0].isObject()) {
 
         UniValue addressValues = find_value(params[0].get_obj(), "addresses");
         if (!addressValues.isArray()) {
@@ -746,17 +454,14 @@ bool getAddressesFromParams(const UniValue& params, std::vector<std::pair<uint16
         for (std::vector<UniValue>::iterator it = values.begin(); it != values.end(); ++it) {
 
             CTxDestination dest = DecodeDestination(it->get_str(), Params());
-            bool isValid = IsValidDestination(dest);
-            if (!isValid) {
+            if (!IsValidDestination(dest)) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
             }
-            CBitcoinAddress address(EncodeLegacyAddr(dest, Params()));
-            uint160 hashBytes;
-            int type = 0;
-            if (!address.GetIndexKey(hashBytes, type)) {
+            auto decoded = GetHashAndAddressType(dest);
+            if (decoded.second == ADDRESSTYPE_UNKNOWN) {
                 throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
             }
-            addresses.push_back(std::make_pair(hashBytes, type));
+            addresses.push_back(decoded);
         }
     } else {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
@@ -826,19 +531,19 @@ UniValue getaddressmempool(const Config &config, const JSONRPCRequest& request)
          it != indexes.end(); it++) {
 
         std::string address;
-        if (!getAddressFromIndex(it->first.type, it->first.addressBytes, address)) {
+        if (!getAddressFromIndex(it->first.type, it->first.addressBytes, address, config)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown address type");
         }
 
         UniValue delta(UniValue::VOBJ);
-        delta.push_back(Pair("address", address));
-        delta.push_back(Pair("txid", it->first.txhash.GetHex()));
-        delta.push_back(Pair("index", (int)it->first.index));
-        delta.push_back(Pair("satoshis", it->second.amount));
-        delta.push_back(Pair("timestamp", it->second.time));
+        delta.pushKV("address", address);
+        delta.pushKV("txid", it->first.txhash.GetHex());
+        delta.pushKV("index", (int)it->first.index);
+        delta.pushKV("satoshis", it->second.amount);
+        delta.pushKV("timestamp", it->second.time);
         if (it->second.amount < 0) {
-            delta.push_back(Pair("prevtxid", it->second.prevhash.GetHex()));
-            delta.push_back(Pair("prevout", (int)it->second.prevout));
+            delta.pushKV("prevtxid", it->second.prevhash.GetHex());
+            delta.pushKV("prevout", (int)it->second.prevout);
         }
         result.push_back(delta);
     }
@@ -906,26 +611,26 @@ UniValue getaddressutxos(const Config &config, const JSONRPCRequest& request)
     for (std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue> >::const_iterator it=unspentOutputs.begin(); it!=unspentOutputs.end(); it++) {
         UniValue output(UniValue::VOBJ);
         std::string address;
-        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address)) {
+        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address, config)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown address type");
         }
 
-        output.push_back(Pair("address", address));
-        output.push_back(Pair("txid", it->first.txhash.GetHex()));
-        output.push_back(Pair("outputIndex", (int)it->first.index));
-        output.push_back(Pair("script", HexStr(it->second.script.begin(), it->second.script.end())));
-        output.push_back(Pair("satoshis", it->second.satoshis));
-        output.push_back(Pair("height", it->second.blockHeight));
+        output.pushKV("address", address);
+        output.pushKV("txid", it->first.txhash.GetHex());
+        output.pushKV("outputIndex", (int)it->first.index);
+        output.pushKV("script", HexStr(it->second.script.begin(), it->second.script.end()));
+        output.pushKV("satoshis", it->second.satoshis);
+        output.pushKV("height", it->second.blockHeight);
         utxos.push_back(output);
     }
 
     if (includeChainInfo) {
         UniValue result(UniValue::VOBJ);
-        result.push_back(Pair("utxos", utxos));
+        result.pushKV("utxos", utxos);
 
         LOCK(cs_main);
-        result.push_back(Pair("hash", chainActive.Tip()->GetBlockHash().GetHex()));
-        result.push_back(Pair("height", (int)chainActive.Height()));
+        result.pushKV("hash", chainActive.Tip()->GetBlockHash().GetHex());
+        result.pushKV("height", (int)chainActive.Height());
         return result;
     } else {
         return utxos;
@@ -1011,17 +716,17 @@ UniValue getaddressdeltas(const Config &config, const JSONRPCRequest& request)
 
     for (std::vector<std::pair<CAddressIndexKey, CAmount> >::const_iterator it=addressIndex.begin(); it!=addressIndex.end(); it++) {
         std::string address;
-        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address)) {
+        if (!getAddressFromIndex(it->first.type, it->first.hashBytes, address, config)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown address type");
         }
 
         UniValue delta(UniValue::VOBJ);
-        delta.push_back(Pair("satoshis", it->second));
-        delta.push_back(Pair("txid", it->first.txhash.GetHex()));
-        delta.push_back(Pair("index", (int)it->first.index));
-        delta.push_back(Pair("blockindex", (int)it->first.txindex));
-        delta.push_back(Pair("height", it->first.blockHeight));
-        delta.push_back(Pair("address", address));
+        delta.pushKV("satoshis", it->second);
+        delta.pushKV("txid", it->first.txhash.GetHex());
+        delta.pushKV("index", (int)it->first.index);
+        delta.pushKV("blockindex", (int)it->first.txindex);
+        delta.pushKV("height", it->first.blockHeight);
+        delta.pushKV("address", address);
         deltas.push_back(delta);
     }
 
@@ -1040,15 +745,15 @@ UniValue getaddressdeltas(const Config &config, const JSONRPCRequest& request)
         UniValue startInfo(UniValue::VOBJ);
         UniValue endInfo(UniValue::VOBJ);
 
-        startInfo.push_back(Pair("hash", startIndex->GetBlockHash().GetHex()));
-        startInfo.push_back(Pair("height", start));
+        startInfo.pushKV("hash", startIndex->GetBlockHash().GetHex());
+        startInfo.pushKV("height", start);
 
-        endInfo.push_back(Pair("hash", endIndex->GetBlockHash().GetHex()));
-        endInfo.push_back(Pair("height", end));
+        endInfo.pushKV("hash", endIndex->GetBlockHash().GetHex());
+        endInfo.pushKV("height", end);
 
-        result.push_back(Pair("deltas", deltas));
-        result.push_back(Pair("start", startInfo));
-        result.push_back(Pair("end", endInfo));
+        result.pushKV("deltas", deltas);
+        result.pushKV("start", startInfo);
+        result.pushKV("end", endInfo);
 
         return result;
     } else {
@@ -1105,8 +810,8 @@ UniValue getaddressbalance(const Config &config, const JSONRPCRequest& request)
     }
 
     UniValue result(UniValue::VOBJ);
-    result.push_back(Pair("balance", balance));
-    result.push_back(Pair("received", received));
+    result.pushKV("balance", balance);
+    result.pushKV("received", received);
 
     return result;
 
@@ -1236,18 +941,32 @@ UniValue getspentinfo(const Config &config, const JSONRPCRequest& request)
     }
 
     UniValue obj(UniValue::VOBJ);
-    obj.push_back(Pair("txid", value.txid.GetHex()));
-    obj.push_back(Pair("index", (int)value.inputIndex));
-    obj.push_back(Pair("height", value.blockHeight));
+    obj.pushKV("txid", value.txid.GetHex());
+    obj.pushKV("index", (int)value.inputIndex);
+    obj.pushKV("height", value.blockHeight);
 
     return obj;
+}
+
+static UniValue getinfo_deprecated(const Config &config,
+                                   const JSONRPCRequest &request) {
+    throw JSONRPCError(RPC_METHOD_NOT_FOUND,
+                       "getinfo\n"
+                       "\nThis call was removed in version 0.19.8. Use the "
+                       "appropriate fields from:\n"
+                       "- getblockchaininfo: blocks, difficulty, chain\n"
+                       "- getnetworkinfo: version, protocolversion, "
+                       "timeoffset, connections, proxy, relayfee, warnings\n"
+                       "- getwalletinfo: balance, keypoololdest, keypoolsize, "
+                       "paytxfee, unlocked_until, walletversion\n"
+                       "\nbitcoin-cli has the option -getinfo to collect and "
+                       "format these in the old format.");
 }
 
 // clang-format off
 static const ContextFreeRPCCommand commands[] = {
     //  category            name                      actor (function)        argNames
     //  ------------------- ------------------------  ----------------------  ----------
-    { "control",            "getinfo",                getinfo,                {} }, /* uses wallet if enabled */
     { "control",            "getmemoryinfo",          getmemoryinfo,          {"mode"} },
     { "util",               "validateaddress",        validateaddress,        {"address"} }, /* uses wallet if enabled */
     { "util",               "createmultisig",         createmultisig,         {"nrequired","keys"} },
@@ -1269,6 +988,7 @@ static const ContextFreeRPCCommand commands[] = {
     { "hidden",             "setmocktime",            setmocktime,            {"timestamp"}},
     { "hidden",             "echo",                   echo,                   {"arg0","arg1","arg2","arg3","arg4","arg5","arg6","arg7","arg8","arg9"}},
     { "hidden",             "echojson",               echo,                   {"arg0","arg1","arg2","arg3","arg4","arg5","arg6","arg7","arg8","arg9"}},
+    { "hidden",             "getinfo",                getinfo_deprecated,     {}},
 };
 // clang-format on
 

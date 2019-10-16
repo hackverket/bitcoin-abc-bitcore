@@ -1,7 +1,7 @@
 # Copyright (c) 2017 The Bitcoin developers
 
 set(CMAKE_SYSTEM_NAME Darwin)
-set(TOOLCHAIN_PREFIX x86_64-apple-darwin11)
+set(TOOLCHAIN_PREFIX x86_64-apple-darwin14)
 
 # On OSX, we use clang by default.
 set(CMAKE_C_COMPILER clang)
@@ -10,13 +10,13 @@ set(CMAKE_CXX_COMPILER clang++)
 # On OSX we use various stuff from Apple's SDK.
 set(OSX_SDK_PATH "${CMAKE_CURRENT_SOURCE_DIR}/depends/SDKs/MacOSX10.11.sdk")
 set(CMAKE_OSX_SYSROOT ${OSX_SDK_PATH})
-set(CMAKE_OSX_DEPLOYMENT_TARGET 10.8)
+set(CMAKE_OSX_DEPLOYMENT_TARGET 10.10)
 
 # target environment on the build host system
 #   set 1st to dir with the cross compiler's C/C++ headers/libs
 set(CMAKE_FIND_ROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/depends/${TOOLCHAIN_PREFIX};${OSX_SDK_PATH}")
 
-# We also may have built dependancies for the native plateform.
+# We also may have built dependencies for the native plateform.
 set(CMAKE_PREFIX_PATH "${CMAKE_CURRENT_SOURCE_DIR}/depends/${TOOLCHAIN_PREFIX}/native")
 
 # modify default behavior of FIND_XXX() commands to

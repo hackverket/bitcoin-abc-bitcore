@@ -21,8 +21,6 @@ from binascii import hexlify, unhexlify
 
 settings = {}
 
-##### Switch endian-ness #####
-
 
 def hex_switchEndian(s):
     """ Switches the endianness of a hex string (in pairs of hex chars) """
@@ -87,7 +85,7 @@ def get_blk_dt(blk_hdr):
 
 def get_block_hashes(settings):
     blkindex = []
-    f = open(settings['hashlist'], "r")
+    f = open(settings['hashlist'], "r", encoding="utf8")
     for line in f:
         line = line.rstrip()
         if settings['rev_hash_bytes'] == 'true':
@@ -281,15 +279,15 @@ if __name__ == '__main__':
         print("Usage: linearize-data.py CONFIG-FILE")
         sys.exit(1)
 
-    f = open(sys.argv[1])
+    f = open(sys.argv[1], encoding="utf8")
     for line in f:
         # skip comment lines
-        m = re.search('^\s*#', line)
+        m = re.search(r'^\s*#', line)
         if m:
             continue
 
         # parse key=value lines
-        m = re.search('^(\w+)\s*=\s*(\S.*)$', line)
+        m = re.search(r'^(\w+)\s*=\s*(\S.*)$', line)
         if m is None:
             continue
         settings[m.group(1)] = m.group(2)

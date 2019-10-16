@@ -17,11 +17,13 @@
 #include <init.h>
 #include <noui.h>
 #include <rpc/server.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <walletinitinterface.h>
 
 #include <cstdio>
+
+const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
 /* Introduction text for doxygen: */
 
@@ -44,7 +46,7 @@
  * <code>Files</code> at the top of the page to start navigating the code.
  */
 
-void WaitForShutdown() {
+static void WaitForShutdown() {
     while (!ShutdownRequested()) {
         MilliSleep(200);
     }
@@ -55,7 +57,7 @@ void WaitForShutdown() {
 //
 // Start
 //
-bool AppInit(int argc, char *argv[]) {
+static bool AppInit(int argc, char *argv[]) {
     // FIXME: Ideally, we'd like to build the config here, but that's currently
     // not possible as the whole application has too many global state. However,
     // this is a first step.
@@ -76,7 +78,12 @@ bool AppInit(int argc, char *argv[]) {
                  _("Run in the background as a daemon and accept commands"),
                  false, OptionsCategory::OPTIONS);
 #endif
-    gArgs.ParseParameters(argc, argv);
+    std::string error;
+    if (!gArgs.ParseParameters(argc, argv, error)) {
+        fprintf(stderr, "Error parsing command line arguments: %s\n",
+                error.c_str());
+        return false;
+    }
 
     // Process help and version before taking care about datadir
     if (HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
@@ -103,10 +110,9 @@ bool AppInit(int argc, char *argv[]) {
                     gArgs.GetArg("-datadir", "").c_str());
             return false;
         }
-        try {
-            gArgs.ReadConfigFiles();
-        } catch (const std::exception &e) {
-            fprintf(stderr, "Error reading configuration file: %s\n", e.what());
+        if (!gArgs.ReadConfigFiles(error)) {
+            fprintf(stderr, "Error reading configuration file: %s\n",
+                    error.c_str());
             return false;
         }
         // Check for -testnet or -regtest parameter (Params() calls are only
@@ -117,6 +123,16 @@ bool AppInit(int argc, char *argv[]) {
             fprintf(stderr, "Error: %s\n", e.what());
             return false;
         }
+
+        // Make sure we create the net-specific data directory early on: if it
+        // is new, this has a side effect of also creating
+        // <datadir>/<net>/wallets/.
+        //
+        // TODO: this should be removed once GetDataDir() no longer creates the
+        // wallets/ subdirectory.
+        // See more info at:
+        // https://reviews.bitcoinabc.org/D3312
+        GetDataDir(true);
 
         // Error out when loose non-argument tokens are encountered on command
         // line
@@ -200,6 +216,10 @@ bool AppInit(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef WIN32
+    util::WinCmdLineArgs winArgs;
+    std::tie(argc, argv) = winArgs.get();
+#endif
     SetupEnvironment();
 
     // Connect bitcoind signal handlers

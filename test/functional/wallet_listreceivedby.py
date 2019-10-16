@@ -2,8 +2,8 @@
 # Copyright (c) 2014-2017 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
 """Test the listreceivedbyaddress RPC."""
+
 from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
@@ -11,6 +11,7 @@ from test_framework.util import (
     assert_array_result,
     assert_equal,
     assert_raises_rpc_error,
+    sync_blocks,
 )
 
 
@@ -21,6 +22,7 @@ class ReceivedByTest(BitcoinTestFramework):
     def run_test(self):
         # Generate block to get out of IBD
         self.nodes[0].generate(1)
+        sync_blocks(self.nodes)
 
         self.log.info("listreceivedbyaddress Test")
 

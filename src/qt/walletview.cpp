@@ -29,9 +29,9 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-WalletView::WalletView(const PlatformStyle *_platformStyle, const Config *cfg,
-                       QWidget *parent)
-    : QStackedWidget(parent), clientModel(0), walletModel(0),
+WalletView::WalletView(const PlatformStyle *_platformStyle,
+                       WalletModel *_walletModel, QWidget *parent)
+    : QStackedWidget(parent), clientModel(nullptr), walletModel(_walletModel),
       platformStyle(_platformStyle) {
     // Create tabs
     overviewPage = new OverviewPage(platformStyle);
@@ -52,8 +52,8 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, const Config *cfg,
     vbox->addLayout(hbox_buttons);
     transactionsPage->setLayout(vbox);
 
-    receiveCoinsPage = new ReceiveCoinsDialog(platformStyle, cfg);
-    sendCoinsPage = new SendCoinsDialog(platformStyle);
+    receiveCoinsPage = new ReceiveCoinsDialog(platformStyle);
+    sendCoinsPage = new SendCoinsDialog(platformStyle, walletModel);
 
     usedSendingAddressesPage =
         new AddressBookPage(platformStyle, AddressBookPage::ForEditing,
@@ -93,6 +93,9 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, const Config *cfg,
     // Pass through messages from transactionView
     connect(transactionView, SIGNAL(message(QString, QString, unsigned int)),
             this, SIGNAL(message(QString, QString, unsigned int)));
+
+    // Set the model properly.
+    setWalletModel(walletModel);
 }
 
 WalletView::~WalletView() {}
@@ -351,16 +354,20 @@ void WalletView::showProgress(const QString &title, int nProgress) {
         progressDialog = new QProgressDialog(title, "", 0, 100);
         progressDialog->setWindowModality(Qt::ApplicationModal);
         progressDialog->setMinimumDuration(0);
-        progressDialog->setCancelButton(0);
         progressDialog->setAutoClose(false);
         progressDialog->setValue(0);
+        progressDialog->setCancelButtonText(tr("Cancel"));
     } else if (nProgress == 100) {
         if (progressDialog) {
             progressDialog->close();
             progressDialog->deleteLater();
         }
     } else if (progressDialog) {
-        progressDialog->setValue(nProgress);
+        if (progressDialog->wasCanceled()) {
+            getWalletModel()->wallet().abortRescan();
+        } else {
+            progressDialog->setValue(nProgress);
+        }
     }
 }
 

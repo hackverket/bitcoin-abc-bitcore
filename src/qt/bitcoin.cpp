@@ -10,6 +10,7 @@
 
 #include <chainparams.h>
 #include <config.h>
+#include <fs.h>
 #include <httprpc.h>
 #include <init.h>
 #include <interfaces/handler.h>
@@ -27,7 +28,7 @@
 #include <rpc/server.h>
 #include <ui_interface.h>
 #include <uint256.h>
-#include <util.h>
+#include <util/system.h>
 #include <walletinitinterface.h>
 #include <warnings.h>
 
@@ -35,8 +36,6 @@
 #include <qt/paymentserver.h>
 #include <qt/walletmodel.h>
 #endif
-
-#include <boost/filesystem/operations.hpp>
 
 #include <QApplication>
 #include <QDebug>
@@ -80,9 +79,10 @@ static void InitMessage(const std::string &message) {
 /**
  * Translate string to current locale using Qt.
  */
-static std::string Translate(const char *psz) {
-    return QCoreApplication::translate("bitcoin-abc", psz).toStdString();
-}
+const std::function<std::string(const char *)> G_TRANSLATION_FUN =
+    [](const char *psz) {
+        return QCoreApplication::translate("bitcoin-abc", psz).toStdString();
+    };
 
 static QString GetLangTerritory() {
     QSettings settings;
@@ -220,6 +220,9 @@ public:
     /// Get window identifier of QMainWindow (BitcoinGUI)
     WId getMainWinId() const;
 
+    /// Setup platform style
+    void setupPlatformStyle();
+
 public Q_SLOTS:
     void initializeResult(bool success);
     void shutdownResult();
@@ -295,10 +298,12 @@ BitcoinApplication::BitcoinApplication(interfaces::Node &node, int &argc,
 #ifdef ENABLE_WALLET
       paymentServer(0), m_wallet_models(),
 #endif
-      returnValue(0) {
+      returnValue(0), platformStyle(0) {
     setQuitOnLastWindowClosed(false);
+}
 
-    // UI per-platform customization.
+void BitcoinApplication::setupPlatformStyle() {
+    // UI per-platform customization
     // This must be done inside the BitcoinApplication constructor, or after it,
     // because PlatformStyle::instantiate requires a QApplication.
     std::string platformName;
@@ -434,7 +439,7 @@ void BitcoinApplication::requestShutdown(Config &config) {
 
 #ifdef ENABLE_WALLET
     window->removeAllWallets();
-    for (WalletModel *walletModel : m_wallet_models) {
+    for (const WalletModel *walletModel : m_wallet_models) {
         delete walletModel;
     }
     m_wallet_models.clear();
@@ -622,20 +627,18 @@ static void MigrateSettings() {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef WIN32
+    util::WinCmdLineArgs winArgs;
+    std::tie(argc, argv) = winArgs.get();
+#endif
     SetupEnvironment();
 
     std::unique_ptr<interfaces::Node> node = interfaces::MakeNode();
 
-    /// 1. Parse command-line options. These take precedence over anything else.
-    // Command-line options take precedence:
-    node->setupServerArgs();
-    SetupUIArgs();
-    node->parseParameters(argc, argv);
-
     // Do not refer to data directory yet, this can be overridden by
     // Intro::pickDataDirectory
 
-    /// 2. Basic Qt initialization (not dependent on parameters or
+    /// 1. Basic Qt initialization (not dependent on parameters or
     /// configuration)
     Q_INIT_RESOURCE(bitcoin);
     Q_INIT_RESOURCE(bitcoin_locale);
@@ -658,7 +661,7 @@ int main(int argc, char *argv[]) {
     //   http://qt-project.org/doc/qt-5/qmetatype.html#qRegisterMetaType)
     //   IMPORTANT if it is no longer a typedef use the normal variant above
     qRegisterMetaType<Amount>("Amount");
-    qRegisterMetaType<std::function<void(void)>>("std::function<void(void)>");
+    qRegisterMetaType<std::function<void()>>("std::function<void()>");
 
     // Need to register any types Qt doesn't know about if you intend
     // to use them with the signal/slot mechanism Qt provides. Even pointers.
@@ -667,6 +670,24 @@ int main(int argc, char *argv[]) {
     // copy-construct non-pointers to objects for invoking slots
     // behind-the-scenes in the 'Queued' connection case.
     qRegisterMetaType<Config *>();
+
+    /// 2. Parse command-line options. We do this after qt in order to show an
+    /// error if there are problems parsing these
+    // Command-line options take precedence:
+    node->setupServerArgs();
+    SetupUIArgs();
+    std::string error;
+    if (!node->parseParameters(argc, argv, error)) {
+        QMessageBox::critical(
+            0, QObject::tr(PACKAGE_NAME),
+            QObject::tr("Error parsing command line arguments: %1.")
+                .arg(QString::fromStdString(error)));
+        return EXIT_FAILURE;
+    }
+
+    // Now that the QApplication is setup and we have parsed our parameters, we
+    // can set the platform style
+    app.setupPlatformStyle();
 
     /// 3. Application identification
     // must be set before OptionsModel is initialized or translations are
@@ -682,14 +703,12 @@ int main(int argc, char *argv[]) {
     // that set the app orgname and app name! If you move the above 3 lines
     // to elsewhere, take this call with you!
     MigrateSettings();
-    GUIUtil::SubstituteFonts(GetLangTerritory());
 
     /// 4. Initialization of translations, so that intro dialog is in user's
     /// language. Now that QSettings are accessible, initialize translations.
     QTranslator qtTranslatorBase, qtTranslator, translatorBase, translator;
     initTranslations(qtTranslatorBase, qtTranslator, translatorBase,
                      translator);
-    translationInterface.Translate.connect(Translate);
 
     // Show help message immediately after parsing command-line options (for
     // "-lang") and setting locale, but before showing splash screen.
@@ -716,14 +735,11 @@ int main(int argc, char *argv[]) {
                 .arg(QString::fromStdString(gArgs.GetArg("-datadir", ""))));
         return EXIT_FAILURE;
     }
-    try {
-        node->readConfigFiles();
-    } catch (const std::exception &e) {
+    if (!node->readConfigFiles(error)) {
         QMessageBox::critical(
             0, QObject::tr(PACKAGE_NAME),
-            QObject::tr("Error: Cannot parse configuration file: %1. Only use "
-                        "key=value syntax.")
-                .arg(e.what()));
+            QObject::tr("Error: Cannot parse configuration file: %1.")
+                .arg(QString::fromStdString(error)));
         return EXIT_FAILURE;
     }
 

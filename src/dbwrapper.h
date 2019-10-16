@@ -9,8 +9,8 @@
 #include <fs.h>
 #include <serialize.h>
 #include <streams.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 #include <version.h>
 
 #include <leveldb/db.h>
@@ -169,6 +169,8 @@ public:
     unsigned int GetValueSize() { return piter->value().size(); }
 };
 
+constexpr int DEFAULT_DBMAX_OPEN_FILES = -1;
+
 class CDBWrapper {
     friend const std::vector<uint8_t> &
     dbwrapper_private::GetObfuscateKey(const CDBWrapper &w);
@@ -196,6 +198,9 @@ private:
     //! the database itself
     leveldb::DB *pdb;
 
+    //! the name of this database
+    std::string m_name;
+
     //! a key used for optional XOR-obfuscation of the database
     std::vector<uint8_t> obfuscate_key;
 
@@ -221,7 +226,7 @@ public:
     CDBWrapper(const boost::filesystem::path &path, size_t nCacheSize,
                bool fMemory = false, bool fWipe = false,
                bool obfuscate = false, bool compression = false,
-               int maxOpenFiles = 64);
+               int maxOpenFiles = DEFAULT_DBMAX_OPEN_FILES);
     ~CDBWrapper();
 
     CDBWrapper(const CDBWrapper &) = delete;
@@ -282,6 +287,9 @@ public:
     }
 
     bool WriteBatch(CDBBatch &batch, bool fSync = false);
+
+    // Get an estimate of LevelDB memory usage (in bytes).
+    size_t DynamicMemoryUsage() const;
 
     // not available for LevelDB; provide for compatibility with BDB
     bool Flush() { return true; }

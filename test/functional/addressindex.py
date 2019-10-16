@@ -20,7 +20,11 @@ class AddressIndexTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 4
         self.setup_clean_chain = True
-        self.extra_args = [["-debug", "-relaypriority=0"],["-debug", "-addressindex"],["-debug", "-addressindex", "-relaypriority=0"], ["-debug", "-addressindex"]]
+        self.extra_args = [
+            ["-debug", "-relaypriority=0"],
+            ["-debug", "-addressindex", "-usecashaddr=0"],
+            ["-debug", "-addressindex", "-relaypriority=0", "-usecashaddr=0"],
+            ["-debug", "-addressindex"]]
 
     def setup_network(self):
         self.setup_nodes()

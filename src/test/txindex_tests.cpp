@@ -3,11 +3,14 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <index/txindex.h>
+
+#include <chainparams.h>
 #include <script/standard.h>
-#include <test/test_bitcoin.h>
-#include <util.h>
-#include <utiltime.h>
+#include <util/system.h>
+#include <util/time.h>
 #include <validation.h>
+
+#include <test/test_bitcoin.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -20,8 +23,8 @@ BOOST_FIXTURE_TEST_CASE(txindex_initial_sync, TestChain100Setup) {
     uint256 block_hash;
 
     // Transaction should not be found in the index before it is started.
-    for (const auto &txn : coinbaseTxns) {
-        BOOST_CHECK(!txindex.FindTx(txn.GetHash(), block_hash, tx_disk));
+    for (const auto &txn : m_coinbase_txns) {
+        BOOST_CHECK(!txindex.FindTx(txn->GetId(), block_hash, tx_disk));
     }
 
     // BlockUntilSyncedToCurrentChain should return false before txindex is
@@ -38,11 +41,17 @@ BOOST_FIXTURE_TEST_CASE(txindex_initial_sync, TestChain100Setup) {
         MilliSleep(100);
     }
 
+    // Check that txindex excludes genesis block transactions.
+    const CBlock &genesis_block = Params().GenesisBlock();
+    for (const auto &txn : genesis_block.vtx) {
+        BOOST_CHECK(!txindex.FindTx(txn->GetId(), block_hash, tx_disk));
+    }
+
     // Check that txindex has all txs that were in the chain before it started.
-    for (const auto &txn : coinbaseTxns) {
-        if (!txindex.FindTx(txn.GetHash(), block_hash, tx_disk)) {
+    for (const auto &txn : m_coinbase_txns) {
+        if (!txindex.FindTx(txn->GetId(), block_hash, tx_disk)) {
             BOOST_ERROR("FindTx failed");
-        } else if (tx_disk->GetHash() != txn.GetHash()) {
+        } else if (tx_disk->GetId() != txn->GetId()) {
             BOOST_ERROR("Read incorrect tx");
         }
     }
@@ -54,12 +63,12 @@ BOOST_FIXTURE_TEST_CASE(txindex_initial_sync, TestChain100Setup) {
         std::vector<CMutableTransaction> no_txns;
         const CBlock &block =
             CreateAndProcessBlock(no_txns, coinbase_script_pub_key);
-        const CTransaction &txn = *block.vtx[0];
+        const CTransactionRef &txn = block.vtx[0];
 
         BOOST_CHECK(txindex.BlockUntilSyncedToCurrentChain());
-        if (!txindex.FindTx(txn.GetHash(), block_hash, tx_disk)) {
+        if (!txindex.FindTx(txn->GetId(), block_hash, tx_disk)) {
             BOOST_ERROR("FindTx failed");
-        } else if (tx_disk->GetHash() != txn.GetHash()) {
+        } else if (tx_disk->GetId() != txn->GetId()) {
             BOOST_ERROR("Read incorrect tx");
         }
     }

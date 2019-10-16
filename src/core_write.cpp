@@ -4,18 +4,28 @@
 
 #include <core_io.h>
 
-#include <dstencode.h>
+#include <config.h>
+#include <key_io.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
 #include <script/sigencoding.h>
 #include <script/standard.h>
 #include <serialize.h>
 #include <streams.h>
-#include <util.h>
-#include <utilmoneystr.h>
-#include <utilstrencodings.h>
+#include <util/moneystr.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <univalue.h>
+
+UniValue ValueFromAmount(const Amount &amount) {
+    bool sign = amount < Amount::zero();
+    Amount n_abs(sign ? -amount : amount);
+    int64_t quotient = n_abs / COIN;
+    int64_t remainder = (n_abs % COIN) / SATOSHI;
+    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
+                                              quotient, remainder));
+}
 
 std::string FormatScript(const CScript &script) {
     std::string ret;
@@ -24,7 +34,7 @@ std::string FormatScript(const CScript &script) {
     while (it != script.end()) {
         CScript::const_iterator it2 = it;
         std::vector<uint8_t> vch;
-        if (script.GetOp2(it, op, &vch)) {
+        if (script.GetOp(it, op, vch)) {
             if (op == OP_0) {
                 ret += "0 ";
                 continue;
@@ -121,7 +131,7 @@ std::string ScriptToAsmStr(const CScript &script,
                     uint32_t flags = SCRIPT_VERIFY_STRICTENC;
                     if (vch.back() & SIGHASH_FORKID) {
                         // If the transaction is using SIGHASH_FORKID, we need
-                        // to set the apropriate flag.
+                        // to set the appropriate flag.
                         // TODO: Remove after the Hard Fork.
                         flags |= SCRIPT_ENABLE_SIGHASH_FORKID;
                     }
@@ -179,7 +189,7 @@ void ScriptPubKeyToUniv(const CScript &scriptPubKey, UniValue &out,
 
     UniValue a(UniValue::VARR);
     for (const CTxDestination &addr : addresses) {
-        a.push_back(EncodeDestination(addr));
+        a.push_back(EncodeDestination(addr, GetConfig()));
     }
     out.pushKV("addresses", a);
 }
@@ -222,8 +232,7 @@ void TxToUniv(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry,
 
         UniValue out(UniValue::VOBJ);
 
-        UniValue outValue(UniValue::VNUM, FormatMoney(txout.nValue));
-        out.pushKV("value", outValue);
+        out.pushKV("value", ValueFromAmount(txout.nValue));
         out.pushKV("n", int64_t(i));
 
         UniValue o(UniValue::VOBJ);
@@ -239,7 +248,7 @@ void TxToUniv(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry,
     }
 
     if (include_hex) {
-        // the hex-encoded transaction. used the name "hex" to be consistent
+        // The hex-encoded transaction. Used the name "hex" to be consistent
         // with the verbose output of "getrawtransaction".
         entry.pushKV("hex", EncodeHexTx(tx, serialize_flags));
     }

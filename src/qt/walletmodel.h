@@ -31,7 +31,7 @@ class CPubKey;
 
 namespace interfaces {
 class Node;
-} // namespace interface
+} // namespace interfaces
 
 QT_BEGIN_NAMESPACE
 class QTimer;
@@ -218,6 +218,10 @@ public:
 
     bool isMultiwallet();
 
+    AddressTableModel *getAddressTableModel() const {
+        return addressTableModel;
+    }
+
 private:
     std::unique_ptr<interfaces::Wallet> m_wallet;
     std::unique_ptr<interfaces::Handler> m_handler_status_changed;
@@ -228,7 +232,7 @@ private:
     interfaces::Node &m_node;
 
     bool fHaveWatchOnly;
-    bool fForceCheckBalanceChanged;
+    bool fForceCheckBalanceChanged{false};
 
     // Wallet has an options model for wallet-specific options (transaction fee,
     // for example)

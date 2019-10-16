@@ -14,6 +14,7 @@ from test_framework.util import (
     assert_greater_than_or_equal,
     assert_raises_rpc_error,
     connect_nodes_bi,
+    find_vout_for_address,
 )
 
 
@@ -27,10 +28,9 @@ def get_unspent(listunspent, amount):
 
 class RawTransactionsTest(BitcoinTestFramework):
     def set_test_params(self):
-        self.num_nodes = 5
+        self.num_nodes = 4
         self.setup_clean_chain = True
-        self.extra_args = [[], [], [], [],
-                           ["-deprecatedrpc=fundrawtransaction"]]
+        self.extra_args = [[], [], [], []]
 
     def setup_network(self, split=False):
         self.setup_nodes()
@@ -39,7 +39,6 @@ class RawTransactionsTest(BitcoinTestFramework):
         connect_nodes_bi(self.nodes[1], self.nodes[2])
         connect_nodes_bi(self.nodes[0], self.nodes[2])
         connect_nodes_bi(self.nodes[0], self.nodes[3])
-        connect_nodes_bi(self.nodes[0], self.nodes[4])
 
     def run_test(self):
         min_relay_tx_fee = self.nodes[0].getnetworkinfo()['relayfee']
@@ -70,14 +69,20 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         watchonly_address = self.nodes[0].getnewaddress()
         watchonly_pubkey = self.nodes[
-            0].validateaddress(watchonly_address)["pubkey"]
+            0].getaddressinfo(watchonly_address)["pubkey"]
         watchonly_amount = Decimal(200)
         self.nodes[3].importpubkey(watchonly_pubkey, "", True)
         watchonly_txid = self.nodes[0].sendtoaddress(
             watchonly_address, watchonly_amount)
+
+        # Lock UTXO so nodes[0] doesn't accidentally spend it
+        watchonly_vout = find_vout_for_address(
+            self.nodes[0], watchonly_txid, watchonly_address)
+        self.nodes[0].lockunspent(
+            False, [{"txid": watchonly_txid, "vout": watchonly_vout}])
+
         self.nodes[0].sendtoaddress(
             self.nodes[3].getnewaddress(), watchonly_amount / 10)
-        self.nodes[0].sendtoaddress(self.nodes[4].getnewaddress(), 5.0)
 
         self.nodes[0].sendtoaddress(self.nodes[2].getnewaddress(), 1.5)
         self.nodes[0].sendtoaddress(self.nodes[2].getnewaddress(), 1.0)
@@ -386,8 +391,8 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr1 = self.nodes[1].getnewaddress()
         addr2 = self.nodes[1].getnewaddress()
 
-        addr1Obj = self.nodes[1].validateaddress(addr1)
-        addr2Obj = self.nodes[1].validateaddress(addr2)
+        addr1Obj = self.nodes[1].getaddressinfo(addr1)
+        addr2Obj = self.nodes[1].getaddressinfo(addr2)
 
         mSigObj = self.nodes[1].addmultisigaddress(
             2, [addr1Obj['pubkey'], addr2Obj['pubkey']])['address']
@@ -416,11 +421,11 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr4 = self.nodes[1].getnewaddress()
         addr5 = self.nodes[1].getnewaddress()
 
-        addr1Obj = self.nodes[1].validateaddress(addr1)
-        addr2Obj = self.nodes[1].validateaddress(addr2)
-        addr3Obj = self.nodes[1].validateaddress(addr3)
-        addr4Obj = self.nodes[1].validateaddress(addr4)
-        addr5Obj = self.nodes[1].validateaddress(addr5)
+        addr1Obj = self.nodes[1].getaddressinfo(addr1)
+        addr2Obj = self.nodes[1].getaddressinfo(addr2)
+        addr3Obj = self.nodes[1].getaddressinfo(addr3)
+        addr4Obj = self.nodes[1].getaddressinfo(addr4)
+        addr5Obj = self.nodes[1].getaddressinfo(addr5)
 
         mSigObj = self.nodes[1].addmultisigaddress(
             4, [addr1Obj['pubkey'], addr2Obj['pubkey'], addr3Obj['pubkey'], addr4Obj['pubkey'], addr5Obj['pubkey']])['address']
@@ -446,13 +451,13 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr1 = self.nodes[2].getnewaddress()
         addr2 = self.nodes[2].getnewaddress()
 
-        addr1Obj = self.nodes[2].validateaddress(addr1)
-        addr2Obj = self.nodes[2].validateaddress(addr2)
+        addr1Obj = self.nodes[2].getaddressinfo(addr1)
+        addr2Obj = self.nodes[2].getaddressinfo(addr2)
 
         mSigObj = self.nodes[2].addmultisigaddress(
             2, [addr1Obj['pubkey'], addr2Obj['pubkey']])['address']
 
-        # send 1.2 BTC to msig addr
+        # send 1.2 BCH to msig addr
         txId = self.nodes[0].sendtoaddress(mSigObj, 1.2)
         self.sync_all()
         self.nodes[1].generate(1)
@@ -480,7 +485,6 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.nodes[1].node_encrypt_wallet("test")
         self.stop_node(2)
         self.stop_node(3)
-        self.stop_node(4)
 
         self.start_nodes()
         # This test is not meant to test fee estimation and we'd like
@@ -492,7 +496,10 @@ class RawTransactionsTest(BitcoinTestFramework):
         connect_nodes_bi(self.nodes[1], self.nodes[2])
         connect_nodes_bi(self.nodes[0], self.nodes[2])
         connect_nodes_bi(self.nodes[0], self.nodes[3])
-        connect_nodes_bi(self.nodes[0], self.nodes[4])
+        # Again lock the watchonly UTXO or nodes[0] may spend it, because
+        # lockunspent is memory-only and thus lost on restart
+        self.nodes[0].lockunspent(
+            False, [{"txid": watchonly_txid, "vout": watchonly_vout}])
         self.sync_all()
 
         # drain the keypool
@@ -687,43 +694,6 @@ class RawTransactionsTest(BitcoinTestFramework):
             result3['fee'], FromHex(CTransaction(), result3['hex']).billable_size(), 10 * result_fee_rate, 10)
 
         #
-        # DEPRECATED, should be removed in v0.20
-        # Test address reuse option #
-        #
-
-        dInputs = []
-        dOutputs = {self.nodes[4].getnewaddress(): 1}
-        dRawTx = self.nodes[4].createrawtransaction(dInputs, dOutputs)
-        dResult = self.nodes[4].fundrawtransaction(
-            dRawTx, {"reserveChangeKey": False})
-        res_dec = self.nodes[0].decoderawtransaction(dResult["hex"])
-        changeaddress = ""
-        for out in res_dec['vout']:
-            if out['value'] > 1.0:
-                changeaddress += out['scriptPubKey']['addresses'][0]
-        assert(changeaddress != "")
-        nextaddr = self.nodes[4].getrawchangeaddress()
-        # frt should not have removed the key from the keypool
-        assert(changeaddress == nextaddr)
-
-        #
-        # DEPRECATED, should be removed in v0.20
-        # Test address reuse option does #
-        # throws an rpc error when not deprecated #
-        #
-
-        assert_raises_rpc_error(-32, "fundrawtransaction -reserveChangeKey "
-                                + "is deprecated and will be fully removed "
-                                + "in v0.20.  To use the -reserveChangeKey "
-                                + "option in v0.19, restart bitcoind with "
-                                + "-deprecatedrpc=fundrawtransaction.\n"
-                                + "Projects should transition to expecting "
-                                + "change addresses removed from the keypool "
-                                + "before upgrading to v0.20",
-                                self.nodes[3].fundrawtransaction, rawTx,
-                                {"reserveChangeKey": False})
-
-        #
         # Test no address reuse occurs #
         #
 
@@ -759,8 +729,8 @@ class RawTransactionsTest(BitcoinTestFramework):
                       rawTx, {"feeRate": 2 * min_relay_tx_fee}),
                   self.nodes[3].fundrawtransaction(rawTx, {"feeRate": 2 * min_relay_tx_fee, "subtractFeeFromOutputs": [0]})]
 
-        dec_tx = [self.nodes[3].decoderawtransaction(tx['hex'])
-                  for tx in result]
+        dec_tx = [self.nodes[3].decoderawtransaction(tx_['hex'])
+                  for tx_ in result]
         output = [d['vout'][1 - r['changepos']]['value']
                   for d, r in zip(dec_tx, result)]
         change = [d['vout'][r['changepos']]['value']

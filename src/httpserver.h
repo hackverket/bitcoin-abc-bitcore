@@ -32,7 +32,7 @@ bool InitHTTPServer(Config &config);
  * This is separate from InitHTTPServer to give users race-condition-free time
  * to register their handlers between InitHTTPServer and StartHTTPServer.
  */
-bool StartHTTPServer();
+void StartHTTPServer();
 
 /** Interrupt HTTP server threads */
 void InterruptHTTPServer();
@@ -140,7 +140,7 @@ public:
      * handler is the handler to call when the event is triggered.
      */
     HTTPEvent(struct event_base *base, bool deleteWhenTriggered,
-              const std::function<void(void)> &handler);
+              const std::function<void()> &handler);
     ~HTTPEvent();
 
     /**
@@ -150,7 +150,7 @@ public:
     void trigger(struct timeval *tv);
 
     bool deleteWhenTriggered;
-    std::function<void(void)> handler;
+    std::function<void()> handler;
 
 private:
     struct event *ev;

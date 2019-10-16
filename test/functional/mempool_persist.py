@@ -29,7 +29,7 @@ Test is as follows:
     transactions in its mempool. This tests that -persistmempool=0
     does not overwrite a previously valid mempool stored on disk.
   - Remove node0 mempool.dat and verify savemempool RPC recreates it
-    and verify that node1 can load it and has 5 transaction in its
+    and verify that node1 can load it and has 5 transactions in its
     mempool.
   - Verify that savemempool throws when the RPC is called if
     node1 can't write to disk.
@@ -64,6 +64,7 @@ class MempoolPersistTest(BitcoinTestFramework):
         for i in range(5):
             self.nodes[2].sendtoaddress(
                 self.nodes[2].getnewaddress(), Decimal("10"))
+        node2_balance = self.nodes[2].getbalance()
         self.sync_all()
 
         self.log.debug(
@@ -71,15 +72,25 @@ class MempoolPersistTest(BitcoinTestFramework):
         assert_equal(len(self.nodes[0].getrawmempool()), 5)
         assert_equal(len(self.nodes[1].getrawmempool()), 5)
 
-        self.log.debug(
-            "Stop-start node0 and node1. Verify that node0 has the transactions in its mempool and node1 does not.")
+        self.log.debug("Stop-start the nodes. Verify that node0 has the "
+                       "transactions in its mempool and node1 does not. "
+                       "Verify that node2 calculates its balance correctly "
+                       "after loading wallet transactions.")
         self.stop_nodes()
-        self.start_node(0)
+        # Give this one a head-start, so we can be "extra-sure" that it didn't load anything later
         self.start_node(1)
+        self.start_node(0)
+        self.start_node(2)
         # Give bitcoind a second to reload the mempool
-        time.sleep(1)
-        wait_until(lambda: len(self.nodes[0].getrawmempool()) == 5)
+        wait_until(lambda: len(self.nodes[0].getrawmempool()) == 5, timeout=1)
+        wait_until(lambda: len(self.nodes[2].getrawmempool()) == 5, timeout=1)
+        # The others have loaded their mempool. If node_1 loaded anything, we'd probably notice by now:
         assert_equal(len(self.nodes[1].getrawmempool()), 0)
+
+        # Verify accounting of mempool transactions after restart is correct
+        # Flush mempool to wallet
+        self.nodes[2].syncwithvalidationinterfacequeue()
+        assert_equal(node2_balance, self.nodes[2].getbalance())
 
         self.log.debug(
             "Stop-start node0 with -persistmempool=0. Verify that it doesn't load its mempool.dat file.")

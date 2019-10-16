@@ -14,7 +14,10 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "atoi",
     ],
     "src/core_read.cpp" => ["is_digit"],
-    "src/dbwrapper.cpp" => ["vsnprintf"],
+    "src/dbwrapper.cpp" => [
+        "stoul",
+        "vsnprintf"
+    ],
     "src/httprpc.cpp" => ["trim"],
     "src/init.cpp" => ["atoi"],
     "src/netbase.cpp" => ["to_lower"],
@@ -29,18 +32,21 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "split",
       "is_space",
     ],
-    "src/torcontrol.cpp" => ["atoi"],
+    "src/torcontrol.cpp" => [
+      "atoi",
+      "strtol",
+    ],
     "src/uint256.cpp" => ["tolower"],
-    "src/util.cpp" => ["atoi", "tolower"],
-    "src/utilmoneystr.cpp" => ["isdigit"],
-    "src/utilstrencodings.cpp" => [
+    "src/util/system.cpp" => ["atoi", "tolower"],
+    "src/util/moneystr.cpp" => ["isdigit"],
+    "src/util/strencodings.cpp" => [
       "atoi",
       "strtol",
       "strtoll",
       "strtoul",
       "strtoull",
     ],
-    "src/utilstrencodings.h" => ["atoi"],
+    "src/util/strencodings.h" => ["atoi"],
   );
 
   const LOCALE_DEPENDENT_FUNCTIONS = array(

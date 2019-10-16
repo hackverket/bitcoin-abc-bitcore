@@ -1,19 +1,22 @@
 #include <clientversion.h>
+#include <fs.h>
 #include <logging.h>
 #include <protocol.h>
 #include <seeder/bitcoin.h>
 #include <seeder/db.h>
 #include <seeder/dns.h>
 #include <streams.h>
+#include <util/system.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cinttypes>
 #include <csignal>
-#include <cstdio>
 #include <cstdlib>
 #include <getopt.h>
 #include <pthread.h>
+
+const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
 class CDnsSeedOpts {
 public:
@@ -369,7 +372,7 @@ extern "C" void *ThreadDumper(void *) {
         {
             std::vector<CAddrReport> v = db.GetAll();
             sort(v.begin(), v.end(), StatCompare);
-            FILE *f = fopen("dnsseed.dat.new", "w+");
+            FILE *f = fsbridge::fopen("dnsseed.dat.new", "w+");
             if (f) {
                 {
                     CAutoFile cf(f, SER_DISK, CLIENT_VERSION);
@@ -377,7 +380,7 @@ extern "C" void *ThreadDumper(void *) {
                 }
                 rename("dnsseed.dat.new", "dnsseed.dat");
             }
-            FILE *d = fopen("dnsseed.dump", "w");
+            FILE *d = fsbridge::fopen("dnsseed.dump", "w");
             fprintf(d, "# address                                        good  "
                        "lastSuccess    %%(2h)   %%(8h)   %%(1d)   %%(7d)  "
                        "%%(30d)  blocks      svcs  version\n");
@@ -400,7 +403,7 @@ extern "C" void *ThreadDumper(void *) {
                 stat[4] += rep.uptime[4];
             }
             fclose(d);
-            FILE *ff = fopen("dnsstats.log", "a");
+            FILE *ff = fsbridge::fopen("dnsstats.log", "a");
             fprintf(ff, "%llu %g %g %g %g %g\n",
                     (unsigned long long)(time(nullptr)), stat[0], stat[1],
                     stat[2], stat[3], stat[4]);
@@ -443,12 +446,12 @@ extern "C" void *ThreadStats(void *) {
 }
 
 static const std::string mainnet_seeds[] = {
-    "seed.bitcoinabc.org", "seed-abc.bitcoinforks.org", "seed.bitprim.org",
-    "seed.deadalnix.me",   "seeder.criptolayer.net",    ""};
+    "seed.bitcoinabc.org", "seed-abc.bitcoinforks.org",
+    "seed.bitprim.org",    "seed.deadalnix.me",
+    "seed.bchd.cash",      ""};
 static const std::string testnet_seeds[] = {
-    "testnet-seed.bitcoinabc.org",    "testnet-seed-abc.bitcoinforks.org",
-    "testnet-seed.bitprim.org",       "testnet-seed.deadalnix.me",
-    "testnet-seeder.criptolayer.net", ""};
+    "testnet-seed.bitcoinabc.org", "testnet-seed-abc.bitcoinforks.org",
+    "testnet-seed.bitprim.org", "testnet-seed.deadalnix.me", ""};
 static const std::string *seeds = mainnet_seeds;
 
 const static unsigned int MAX_HOSTS_PER_SEED = 128;
@@ -530,7 +533,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "No e-mail address set. Please use -m.\n");
         exit(1);
     }
-    FILE *f = fopen("dnsseed.dat", "r");
+    FILE *f = fsbridge::fopen("dnsseed.dat", "r");
     if (f) {
         printf("Loading dnsseed.dat...");
         CAutoFile cf(f, SER_DISK, CLIENT_VERSION);

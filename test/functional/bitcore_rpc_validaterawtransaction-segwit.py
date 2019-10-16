@@ -107,11 +107,19 @@ class ValidateRawSegwitTransactionTest(BitcoinTestFramework):
                 is_minable = False,
                 has_valid_inputs = False,
                 num_errors = len(["input-script-failed"]))
+#            # Upstream has changed to a weird policy for segwit transactions,
+#            # they are no longer accepted to mempool, even though they are
+#            # valid non-standard transactions.
+#            check_validaterawtx(node_accepting_nonstandard,
+#                tx, num_errors = 0)
+#
+#        node_accepting_nonstandard.sendrawtransaction(ToHex(txspend))
+#        node_accepting_nonstandard.sendrawtransaction(ToHex(txspend_case0))
             check_validaterawtx(node_accepting_nonstandard,
-                tx, num_errors = 0)
-
-        node_accepting_nonstandard.sendrawtransaction(ToHex(txspend))
-        node_accepting_nonstandard.sendrawtransaction(ToHex(txspend_case0))
+                tx,
+                is_minable = False,
+                has_valid_inputs = False,
+                num_errors = len(["input-script-failed"]))
 
 if __name__ == '__main__':
     ValidateRawSegwitTransactionTest().main()

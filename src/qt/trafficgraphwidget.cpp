@@ -38,13 +38,14 @@ int TrafficGraphWidget::getGraphRangeMins() const {
 }
 
 void TrafficGraphWidget::paintPath(QPainterPath &path, QQueue<float> &samples) {
-    int h = height() - YMARGIN * 2, w = width() - XMARGIN * 2;
-    int sampleCount = samples.size(), x = XMARGIN + w, y;
+    int sampleCount = samples.size();
     if (sampleCount > 0) {
+        int h = height() - YMARGIN * 2, w = width() - XMARGIN * 2;
+        int x = XMARGIN + w;
         path.moveTo(x, YMARGIN + h);
         for (int i = 0; i < sampleCount; ++i) {
             x = XMARGIN + w - w * i / DESIRED_SAMPLES;
-            y = YMARGIN + h - (int)(h * samples.at(i) / fMax);
+            int y = YMARGIN + h - (int)(h * samples.at(i) / fMax);
             path.lineTo(x, y);
         }
         path.lineTo(x, YMARGIN + h);
@@ -132,10 +133,10 @@ void TrafficGraphWidget::updateRates() {
     }
 
     float tmax = 0.0f;
-    for (float f : vSamplesIn) {
+    for (const float f : vSamplesIn) {
         if (f > tmax) tmax = f;
     }
-    for (float f : vSamplesOut) {
+    for (const float f : vSamplesOut) {
         if (f > tmax) tmax = f;
     }
     fMax = tmax;

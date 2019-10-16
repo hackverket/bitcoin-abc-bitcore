@@ -11,7 +11,7 @@
 #include <qt/forms/ui_intro.h>
 #include <qt/guiutil.h>
 #include <qt/intro.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <QFileDialog>
 #include <QMessageBox>
@@ -23,7 +23,7 @@ static const uint64_t GB_BYTES = 1000000000LL;
 /**
  * Minimum free space (in GB) needed for data directory.
  */
-static const uint64_t BLOCK_CHAIN_SIZE = 200;
+static const uint64_t BLOCK_CHAIN_SIZE = 220;
 /**
  * Minimum free space (in GB) needed for data directory when pruned; Does not
  * include prune target.

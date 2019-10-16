@@ -6,6 +6,7 @@
 
 #include <addrdb.h>
 #include <amount.h>
+#include <banman.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <config.h>
@@ -24,7 +25,7 @@
 #include <sync.h>
 #include <txmempool.h>
 #include <ui_interface.h>
-#include <util.h>
+#include <util/system.h>
 #include <validation.h>
 #include <warnings.h>
 
@@ -51,10 +52,13 @@ namespace interfaces {
 namespace {
 
     class NodeImpl : public Node {
-        void parseParameters(int argc, const char *const argv[]) override {
-            gArgs.ParseParameters(argc, argv);
+        bool parseParameters(int argc, const char *const argv[],
+                             std::string &error) override {
+            return gArgs.ParseParameters(argc, argv, error);
         }
-        void readConfigFiles() override { gArgs.ReadConfigFiles(); }
+        bool readConfigFiles(std::string &error) override {
+            return gArgs.ReadConfigFiles(error);
+        }
         bool softSetArg(const std::string &arg,
                         const std::string &value) override {
             return gArgs.SoftSetArg(arg, value);
@@ -128,24 +132,30 @@ namespace {
             return false;
         }
         bool getBanned(banmap_t &banmap) override {
-            if (g_connman) {
-                g_connman->GetBanned(banmap);
+            if (g_banman) {
+                g_banman->GetBanned(banmap);
                 return true;
             }
             return false;
         }
         bool ban(const CNetAddr &net_addr, BanReason reason,
                  int64_t ban_time_offset) override {
-            if (g_connman) {
-                g_connman->Ban(net_addr, reason, ban_time_offset);
+            if (g_banman) {
+                g_banman->Ban(net_addr, reason, ban_time_offset);
                 return true;
             }
             return false;
         }
         bool unban(const CSubNet &ip) override {
-            if (g_connman) {
-                g_connman->Unban(ip);
+            if (g_banman) {
+                g_banman->Unban(ip);
                 return true;
+            }
+            return false;
+        }
+        bool disconnect(const CNetAddr &net_addr) override {
+            if (g_connman) {
+                return g_connman->DisconnectNode(net_addr);
             }
             return false;
         }
@@ -207,28 +217,9 @@ namespace {
         bool getNetworkActive() override {
             return g_connman && g_connman->GetNetworkActive();
         }
-        Amount getMinimumFee(unsigned int tx_bytes) override {
-            Amount result;
-            CHECK_WALLET(result = GetMinimumFee(tx_bytes, g_mempool));
-            return result;
-        }
-        Amount getMinimumFee(unsigned int tx_bytes,
-                             const CCoinControl &coin_control) override {
-            Amount result;
-            CHECK_WALLET(result =
-                             GetMinimumFee(tx_bytes, g_mempool, coin_control));
-            return result;
-        }
         Amount getMaxTxFee() override { return ::maxTxFee; }
         CFeeRate estimateSmartFee() override { return g_mempool.estimateFee(); }
         CFeeRate getDustRelayFee() override { return ::dustRelayFee; }
-        CFeeRate getFallbackFee() override {
-            CHECK_WALLET(return CWallet::fallbackFee);
-        }
-        CFeeRate getPayTxFee() override { CHECK_WALLET(return ::payTxFee); }
-        void setPayTxFee(CFeeRate rate) override {
-            CHECK_WALLET(::payTxFee = rate);
-        }
         UniValue executeRpc(Config &config, const std::string &command,
                             const UniValue &params,
                             const std::string &uri) override {
@@ -254,8 +245,8 @@ namespace {
         std::vector<std::unique_ptr<Wallet>> getWallets() override {
 #ifdef ENABLE_WALLET
             std::vector<std::unique_ptr<Wallet>> wallets;
-            for (CWalletRef wallet : ::vpwallets) {
-                wallets.emplace_back(MakeWallet(*wallet));
+            for (const std::shared_ptr<CWallet> &wallet : GetWallets()) {
+                wallets.emplace_back(MakeWallet(wallet));
             }
             return wallets;
 #else
@@ -278,7 +269,9 @@ namespace {
         }
         std::unique_ptr<Handler> handleLoadWallet(LoadWalletFn fn) override {
             CHECK_WALLET(return MakeHandler(::uiInterface.LoadWallet.connect(
-                [fn](CWallet *wallet) { fn(MakeWallet(*wallet)); })));
+                [fn](std::shared_ptr<CWallet> wallet) {
+                    fn(MakeWallet(wallet));
+                })));
         }
         std::unique_ptr<Handler> handleNotifyNumConnectionsChanged(
             NotifyNumConnectionsChangedFn fn) override {
@@ -315,7 +308,6 @@ namespace {
                 }));
         }
     };
-
 } // namespace
 
 std::unique_ptr<Node> MakeNode() {

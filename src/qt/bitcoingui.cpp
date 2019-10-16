@@ -8,7 +8,9 @@
 
 #include <qt/bitcoingui.h>
 
+#include <chain.h>
 #include <chainparams.h>
+#include <config.h>
 #include <init.h>
 #include <interfaces/handler.h>
 #include <interfaces/node.h>
@@ -34,7 +36,7 @@
 #include <qt/walletview.h>
 #endif // ENABLE_WALLET
 #include <ui_interface.h>
-#include <util.h>
+#include <util/system.h>
 
 #include <QAction>
 #include <QApplication>
@@ -56,8 +58,6 @@
 #include <QToolBar>
 #include <QUrlQuery>
 #include <QVBoxLayout>
-
-#include <iostream>
 
 const std::string BitcoinGUI::DEFAULT_UIPLATFORM =
 #if defined(Q_OS_MAC)
@@ -104,7 +104,7 @@ BitcoinGUI::BitcoinGUI(interfaces::Node &node, const Config *configIn,
 #ifdef ENABLE_WALLET
     if (enableWallet) {
         /** Create wallet frame and make it the central widget */
-        walletFrame = new WalletFrame(_platformStyle, config, this);
+        walletFrame = new WalletFrame(_platformStyle, this);
         setCentralWidget(walletFrame);
     } else
 #endif // ENABLE_WALLET
@@ -263,7 +263,8 @@ void BitcoinGUI::createActions() {
         tr("&Receive"), this);
     receiveCoinsAction->setStatusTip(
         tr("Request payments (generates QR codes and %1: URIs)")
-            .arg(GUIUtil::bitcoinURIScheme(*config)));
+            .arg(QString::fromStdString(
+                config->GetChainParams().CashAddrPrefix())));
     receiveCoinsAction->setToolTip(receiveCoinsAction->statusTip());
     receiveCoinsAction->setCheckable(true);
     receiveCoinsAction->setShortcut(QKeySequence(Qt::ALT + Qt::Key_3));
@@ -388,8 +389,10 @@ void BitcoinGUI::createActions() {
 
     openAction = new QAction(platformStyle->TextColorIcon(":/icons/open"),
                              tr("Open &URI..."), this);
-    openAction->setStatusTip(tr("Open a %1: URI or payment request")
-                                 .arg(GUIUtil::bitcoinURIScheme(*config)));
+    openAction->setStatusTip(
+        tr("Open a %1: URI or payment request")
+            .arg(QString::fromStdString(
+                config->GetChainParams().CashAddrPrefix())));
 
     showHelpMessageAction =
         new QAction(platformStyle->TextColorIcon(":/icons/info"),
@@ -711,7 +714,7 @@ void BitcoinGUI::showHelpMessageClicked() {
 
 #ifdef ENABLE_WALLET
 void BitcoinGUI::openClicked() {
-    OpenURIDialog dlg(config, this);
+    OpenURIDialog dlg(config->GetChainParams(), this);
     if (dlg.exec()) {
         Q_EMIT receivedURI(dlg.getURI());
     }
@@ -803,8 +806,9 @@ void BitcoinGUI::setNetworkActive(bool networkActive) {
 void BitcoinGUI::updateHeadersSyncProgressLabel() {
     int64_t headersTipTime = clientModel->getHeaderTipTime();
     int headersTipHeight = clientModel->getHeaderTipHeight();
-    int estHeadersLeft = (GetTime() - headersTipTime) /
-                         Params().GetConsensus().nPowTargetSpacing;
+    int estHeadersLeft =
+        (GetTime() - headersTipTime) /
+        config->GetChainParams().GetConsensus().nPowTargetSpacing;
     if (estHeadersLeft > HEADER_HEIGHT_DELTA_SYNC) {
         progressBarLabel->setText(
             tr("Syncing Headers (%1%)...")
@@ -869,7 +873,7 @@ void BitcoinGUI::setNumBlocks(int count, const QDateTime &blockDate,
     tooltip = tr("Processed %n block(s) of transaction history.", "", count);
 
     // Set icon state: spinning if catching up, tick otherwise
-    if (secs < 90 * 60) {
+    if (secs < MAX_BLOCK_TIME_GAP) {
         tooltip = tr("Up to date") + QString(".<br>") + tooltip;
         labelBlocksIcon->setPixmap(
             platformStyle->SingleColorIcon(":/icons/synced")
@@ -998,6 +1002,10 @@ void BitcoinGUI::changeEvent(QEvent *e) {
                 static_cast<QWindowStateChangeEvent *>(e);
             if (!(wsevt->oldState() & Qt::WindowMinimized) && isMinimized()) {
                 QTimer::singleShot(0, this, SLOT(hide()));
+                e->ignore();
+            } else if ((wsevt->oldState() & Qt::WindowMinimized) &&
+                       !isMinimized()) {
+                QTimer::singleShot(0, this, SLOT(show()));
                 e->ignore();
             }
         }
@@ -1244,9 +1252,11 @@ static bool ThreadSafeMessageBox(BitcoinGUI *gui, const std::string &message,
 void BitcoinGUI::subscribeToCoreSignals() {
     // Connect signals to client
     m_handler_message_box = m_node.handleMessageBox(
-        boost::bind(ThreadSafeMessageBox, this, _1, _2, _3));
+        std::bind(ThreadSafeMessageBox, this, std::placeholders::_1,
+                  std::placeholders::_2, std::placeholders::_3));
     m_handler_question = m_node.handleQuestion(
-        boost::bind(ThreadSafeMessageBox, this, _1, _3, _4));
+        std::bind(ThreadSafeMessageBox, this, std::placeholders::_1,
+                  std::placeholders::_3, std::placeholders::_4));
 }
 
 void BitcoinGUI::unsubscribeFromCoreSignals() {
@@ -1285,7 +1295,7 @@ void UnitDisplayStatusBarControl::mousePressEvent(QMouseEvent *event) {
  * mouse events. */
 void UnitDisplayStatusBarControl::createContextMenu() {
     menu = new QMenu(this);
-    for (BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
+    for (const BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
         QAction *menuAction = new QAction(QString(BitcoinUnits::name(u)), this);
         menuAction->setData(QVariant(u));
         menu->addAction(menuAction);

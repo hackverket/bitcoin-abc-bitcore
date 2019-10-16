@@ -5,7 +5,7 @@
 DIST_SUBDIRS = secp256k1 univalue
 
 AM_LDFLAGS = $(PTHREAD_CFLAGS) $(LIBTOOL_LDFLAGS) $(HARDENED_LDFLAGS) $(SANITIZER_LDFLAGS)
-AM_CXXFLAGS = $(DEBUG_CXXFLAGS) $(HARDENED_CXXFLAGS) $(ERROR_CXXFLAGS) $(SANITIZER_CXXFLAGS)
+AM_CXXFLAGS = $(DEBUG_CXXFLAGS) $(HARDENED_CXXFLAGS) $(WARN_CXXFLAGS) $(NOWARN_CXXFLAGS) $(ERROR_CXXFLAGS) $(SANITIZER_CXXFLAGS)
 AM_CPPFLAGS = $(DEBUG_CPPFLAGS) $(HARDENED_CPPFLAGS)
 AM_LIBTOOLFLAGS = --preserve-dup-deps
 EXTRA_LIBRARIES =
@@ -107,6 +107,7 @@ BITCOIN_CORE_H = \
   timestampindex.h \
   addrman.h \
   avalanche.h \
+  banman.h \
   base58.h \
   bloom.h \
   blockencodings.h \
@@ -120,15 +121,18 @@ BITCOIN_CORE_H = \
   chain.h \
   chainparams.h \
   chainparamsbase.h \
+  chainparamsconstants.h \
   chainparamsseeds.h \
   checkpoints.h \
   checkqueue.h \
   clientversion.h \
   coins.h \
   compat.h \
+  compat/assumptions.h \
   compat/byteswap.h \
   compat/endian.h \
   compat/sanity.h \
+  compat/setenv.h \
   compressor.h \
   config.h \
   consensus/activation.h \
@@ -137,8 +141,7 @@ BITCOIN_CORE_H = \
   core_io.h \
   core_memusage.h \
   cuckoocache.h \
-  diskblockpos.h \
-  dstencode.h \
+  flatfile.h \
   fs.h \
   globals.h \
   httprpc.h \
@@ -155,6 +158,7 @@ BITCOIN_CORE_H = \
   interfaces/node.h \
   interfaces/wallet.h \
   key.h \
+  key_io.h \
   keystore.h \
   dbwrapper.h \
   limitedmap.h \
@@ -191,10 +195,10 @@ BITCOIN_CORE_H = \
   rwcollection.h \
   scheduler.h \
   script/scriptcache.h \
+  script/ismine.h \
   script/sigcache.h \
   script/sign.h \
   script/standard.h \
-  script/ismine.h \
   streams.h \
   support/allocators/secure.h \
   support/allocators/zeroafterfree.h \
@@ -210,15 +214,17 @@ BITCOIN_CORE_H = \
   txmempool.h \
   ui_interface.h \
   undo.h \
-  util.h \
-  utilmoneystr.h \
-  utiltime.h \
+  util/system.h \
+  util/moneystr.h \
+  util/time.h \
+  util/bitmanip.h \
   util/bytevectorhash.h \
   validation.h \
   validationinterface.h \
   versionbits.h \
   walletinitinterface.h \
   wallet/coincontrol.h \
+  wallet/coinselection.h \
   wallet/crypter.h \
   wallet/db.h \
   wallet/finaltx.h \
@@ -245,9 +251,10 @@ libbitcoin_util_a-clientversion.$(OBJEXT): obj/build.h
 libbitcoin_server_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(MINIUPNPC_CPPFLAGS) $(EVENT_CFLAGS) $(EVENT_PTHREADS_CFLAGS)
 libbitcoin_server_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_server_a_SOURCES = \
-  addrman.cpp \
   addrdb.cpp \
+  addrman.cpp \
   avalanche.cpp \
+  banman.cpp \
   bloom.cpp \
   blockencodings.cpp \
   blockfilter.cpp \
@@ -256,6 +263,7 @@ libbitcoin_server_a_SOURCES = \
   config.cpp \
   consensus/activation.cpp \
   consensus/tx_verify.cpp \
+  flatfile.cpp \
   globals.cpp \
   httprpc.cpp \
   httpserver.cpp \
@@ -289,7 +297,6 @@ libbitcoin_server_a_SOURCES = \
   rpc/server.cpp \
   script/scriptcache.cpp \
   script/sigcache.cpp \
-  script/ismine.cpp \
   timedata.cpp \
   torcontrol.cpp \
   txdb.cpp \
@@ -315,7 +322,9 @@ libbitcoin_wallet_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 libbitcoin_wallet_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_wallet_a_SOURCES = \
   interfaces/wallet.cpp \
+  wallet/coincontrol.cpp \
   wallet/crypter.cpp \
+  wallet/coinselection.cpp \
   wallet/db.cpp \
   wallet/finaltx.cpp \
   wallet/fees.cpp \
@@ -396,6 +405,8 @@ libbitcoin_consensus_a_SOURCES = \
   pubkey.cpp \
   pubkey.h \
   script/bitcoinconsensus.cpp \
+  script/bitfield.cpp \
+  script/bitfield.h \
   script/sighashtype.h \
   script/interpreter.cpp \
   script/interpreter.h \
@@ -407,11 +418,12 @@ libbitcoin_consensus_a_SOURCES = \
   script/sigencoding.cpp \
   script/sigencoding.h \
   serialize.h \
+  span.h \
   tinyformat.h \
   uint256.cpp \
   uint256.h \
-  utilstrencodings.cpp \
-  utilstrencodings.h \
+  util/strencodings.cpp \
+  util/strencodings.h \
   version.h
 
 # common: shared between bitcoind, and bitcoin-qt and non-server tools
@@ -426,17 +438,18 @@ libbitcoin_common_a_SOURCES = \
   config.cpp \
   coins.cpp \
   compressor.cpp \
-  dstencode.cpp \
   feerate.cpp \
   globals.cpp \
   core_read.cpp \
   core_write.cpp \
   key.cpp \
+  key_io.cpp \
   keystore.cpp \
   netaddress.cpp \
   netbase.cpp \
   protocol.cpp \
   scheduler.cpp \
+  script/ismine.cpp \
   script/sign.cpp \
   script/standard.cpp \
   warnings.cpp \
@@ -465,10 +478,10 @@ libbitcoin_util_a_SOURCES = \
   threadinterrupt.cpp \
   uint256.cpp \
   uint256.h \
-  util.cpp \
-  utilmoneystr.cpp \
-  utilstrencodings.cpp \
-  utiltime.cpp \
+  util/system.cpp \
+  util/moneystr.cpp \
+  util/strencodings.cpp \
+  util/time.cpp \
   util/bytevectorhash.cpp \
   $(BITCOIN_CORE_H)
 
@@ -512,10 +525,10 @@ endif
 
 bitcoind_LDADD = \
   $(LIBBITCOIN_SERVER) \
+  $(LIBBITCOIN_WALLET) \
   $(LIBBITCOIN_COMMON) \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_UTIL) \
-  $(LIBBITCOIN_WALLET) \
   $(LIBBITCOIN_ZMQ) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
@@ -618,10 +631,17 @@ CLEANFILES += univalue/*.gcda univalue/*.gcno
 CLEANFILES += wallet/*.gcda wallet/*.gcno
 CLEANFILES += wallet/test/*.gcda wallet/test/*.gcno
 CLEANFILES += zmq/*.gcda zmq/*.gcno
-
-DISTCLEANFILES = obj/build.h
+CLEANFILES += obj/build.h
 
 EXTRA_DIST = $(CTAES_DIST)
+
+
+config/bitcoin-config.h: config/stamp-h1
+	@$(MAKE) -C $(top_builddir) $(subdir)/$(@)
+config/stamp-h1: $(top_srcdir)/$(subdir)/config/bitcoin-config.h.in $(top_builddir)/config.status
+	$(AM_V_at)$(MAKE) -C $(top_builddir) $(subdir)/$(@)
+$(top_srcdir)/$(subdir)/config/bitcoin-config.h.in:  $(am__configure_deps)
+	$(AM_V_at)$(MAKE) -C $(top_srcdir) $(subdir)/config/bitcoin-config.h.in
 
 clean-local:
 	-$(MAKE) -C secp256k1 clean

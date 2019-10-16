@@ -6,8 +6,8 @@
 #include <qt/sendcoinsdialog.h>
 
 #include <chainparams.h>
-#include <dstencode.h>
 #include <interfaces/node.h>
+#include <key_io.h>
 #include <qt/addresstablemodel.h>
 #include <qt/bitcoinunits.h>
 #include <qt/clientmodel.h>
@@ -16,7 +16,6 @@
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
 #include <qt/sendcoinsentry.h>
-#include <qt/walletmodel.h>
 #include <txmempool.h>
 #include <ui_interface.h>
 #include <wallet/coincontrol.h>
@@ -30,9 +29,9 @@
 #include <QTimer>
 
 SendCoinsDialog::SendCoinsDialog(const PlatformStyle *_platformStyle,
-                                 QWidget *parent)
-    : QDialog(parent), ui(new Ui::SendCoinsDialog), clientModel(0), model(0),
-      fNewRecipientAllowed(true), fFeeMinimized(true),
+                                 WalletModel *_model, QWidget *parent)
+    : QDialog(parent), ui(new Ui::SendCoinsDialog), clientModel(nullptr),
+      model(_model), fNewRecipientAllowed(true), fFeeMinimized(true),
       platformStyle(_platformStyle) {
     ui->setupUi(this);
 
@@ -122,7 +121,7 @@ SendCoinsDialog::SendCoinsDialog(const PlatformStyle *_platformStyle,
     }
     if (!settings.contains("nTransactionFee")) {
         settings.setValue("nTransactionFee",
-                          qint64(DEFAULT_TRANSACTION_FEE / SATOSHI));
+                          qint64(DEFAULT_PAY_TX_FEE / SATOSHI));
     }
     if (!settings.contains("fPayOnlyMinFee")) {
         settings.setValue("fPayOnlyMinFee", false);
@@ -140,6 +139,9 @@ SendCoinsDialog::SendCoinsDialog(const PlatformStyle *_platformStyle,
     ui->checkBoxMinimumFee->setChecked(
         settings.value("fPayOnlyMinFee").toBool());
     minimizeFeeSection(settings.value("fFeeSectionMinimized").toBool());
+
+    // Set the model properly.
+    setModel(model);
 }
 
 void SendCoinsDialog::setClientModel(ClientModel *_clientModel) {
@@ -198,20 +200,10 @@ void SendCoinsDialog::setModel(WalletModel *_model) {
         connect(ui->checkBoxMinimumFee, SIGNAL(stateChanged(int)), this,
                 SLOT(coinControlUpdateLabels()));
 
-        ui->customFee->setSingleStep(model->node().getMinimumFee(1000));
+        ui->customFee->setSingleStep(model->wallet().getRequiredFee(1000));
         updateFeeSectionControls();
         updateMinFeeLabel();
         updateSmartFeeLabel();
-
-        // Cleanup old confirmation target related settings
-        // TODO: Remove these in 0.20
-        QSettings settings;
-        if (settings.value("nSmartFeeSliderPosition").toInt() != 0) {
-            settings.remove("nSmartFeeSliderPosition");
-        }
-        if (settings.value("nConfTarget").toInt() != 0) {
-            settings.remove("nConfTarget");
-        }
     }
 }
 
@@ -308,69 +300,78 @@ void SendCoinsDialog::on_sendButton_clicked() {
         address.append("</span>");
 
         QString recipientElement;
+        recipientElement = "<br />";
 
         // normal payment
         if (!rcp.paymentRequest.IsInitialized()) {
             if (rcp.label.length() > 0) {
                 // label with address
-                recipientElement =
-                    tr("%1 to %2").arg(amount, GUIUtil::HtmlEscape(rcp.label));
+                recipientElement.append(
+                    tr("%1 to %2").arg(amount, GUIUtil::HtmlEscape(rcp.label)));
                 recipientElement.append(QString(" (%1)").arg(address));
             } else {
                 // just address
-                recipientElement = tr("%1 to %2").arg(amount, address);
+                recipientElement.append(tr("%1 to %2").arg(amount, address));
             }
         } else if (!rcp.authenticatedMerchant.isEmpty()) {
             // authenticated payment request
-            recipientElement =
+            recipientElement.append(
                 tr("%1 to %2")
                     .arg(amount,
-                         GUIUtil::HtmlEscape(rcp.authenticatedMerchant));
+                         GUIUtil::HtmlEscape(rcp.authenticatedMerchant)));
         } else {
             // unauthenticated payment request
-            recipientElement = tr("%1 to %2").arg(amount, address);
+            recipientElement.append(tr("%1 to %2").arg(amount, address));
         }
 
         formatted.append(recipientElement);
     }
 
     QString questionString = tr("Are you sure you want to send?");
-    questionString.append("<br /><br />%1");
+    questionString.append("<br /><span style='font-size:10pt;'>");
+    questionString.append(tr("Please, review your transaction."));
+    questionString.append("</span><br />%1");
 
     if (txFee > Amount::zero()) {
         // append fee string if a fee is required
-        questionString.append("<hr /><span style='color:#aa0000;'>");
-        questionString.append(BitcoinUnits::formatHtmlWithUnit(
-            model->getOptionsModel()->getDisplayUnit(), txFee));
-        questionString.append("</span> ");
-        questionString.append(tr("added as transaction fee"));
+        questionString.append("<hr /><b>");
+        questionString.append(tr("Transaction fee"));
+        questionString.append("</b>");
 
         // append transaction size
         questionString.append(
             " (" +
             QString::number((double)currentTransaction.getTransactionSize() /
                             1000) +
-            " kB)");
+            " kB): ");
+
+        // append transaction fee value
+        questionString.append(
+            "<span style='color:#aa0000; font-weight:bold;'>");
+        questionString.append(BitcoinUnits::formatHtmlWithUnit(
+            model->getOptionsModel()->getDisplayUnit(), txFee));
+        questionString.append("</span><br />");
     }
 
     // add total amount in all subdivision units
     questionString.append("<hr />");
     Amount totalAmount = currentTransaction.getTotalTransactionAmount() + txFee;
     QStringList alternativeUnits;
-    for (BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
+    for (const BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
         if (u != model->getOptionsModel()->getDisplayUnit()) {
             alternativeUnits.append(
                 BitcoinUnits::formatHtmlWithUnit(u, totalAmount));
         }
     }
     questionString.append(
-        tr("Total Amount %1")
+        QString("<b>%1</b>: <b>%2</b>")
+            .arg(tr("Total Amount"))
             .arg(BitcoinUnits::formatHtmlWithUnit(
                 model->getOptionsModel()->getDisplayUnit(), totalAmount)));
     questionString.append(
-        QString("<span style='font-size:10pt;font-weight:normal;'><br "
-                "/>(=%2)</span>")
-            .arg(alternativeUnits.join(" " + tr("or") + "<br />")));
+        QString("<br /><span style='font-size:10pt; "
+                "font-weight:normal;'>(=%1)</span>")
+            .arg(alternativeUnits.join(" " + tr("or") + " ")));
 
     SendConfirmationDialog confirmationDialog(
         tr("Confirm send coins"), questionString.arg(formatted.join("<br />")),
@@ -400,6 +401,12 @@ void SendCoinsDialog::on_sendButton_clicked() {
 }
 
 void SendCoinsDialog::clear() {
+    // Clear coin control settings
+    CoinControlDialog::coinControl()->UnSelectAll();
+    ui->checkBoxCoinControlChange->setChecked(false);
+    ui->lineEditCoinControlChange->clear();
+    coinControlUpdateLabels();
+
     // Remove entries until only one left
     while (ui->entries->count()) {
         ui->entries->takeAt(0)->widget()->deleteLater();
@@ -418,8 +425,7 @@ void SendCoinsDialog::accept() {
 }
 
 SendCoinsEntry *SendCoinsDialog::addEntry() {
-    SendCoinsEntry *entry = new SendCoinsEntry(platformStyle, this);
-    entry->setModel(model);
+    SendCoinsEntry *entry = new SendCoinsEntry(platformStyle, model, this);
     ui->entries->addWidget(entry);
     connect(entry, SIGNAL(removeEntry(SendCoinsEntry *)), this,
             SLOT(removeEntry(SendCoinsEntry *)));
@@ -478,7 +484,7 @@ QWidget *SendCoinsDialog::setupTabChain(QWidget *prev) {
 }
 
 void SendCoinsDialog::setAddress(const QString &address) {
-    SendCoinsEntry *entry = 0;
+    SendCoinsEntry *entry = nullptr;
     // Replace the first entry if it is still unused
     if (ui->entries->count() == 1) {
         SendCoinsEntry *first =
@@ -499,7 +505,7 @@ void SendCoinsDialog::pasteEntry(const SendCoinsRecipient &rv) {
         return;
     }
 
-    SendCoinsEntry *entry = 0;
+    SendCoinsEntry *entry = nullptr;
     // Replace the first entry if it is still unused
     if (ui->entries->count() == 1) {
         SendCoinsEntry *first =
@@ -644,7 +650,7 @@ void SendCoinsDialog::useAvailableBalance(SendCoinsEntry *entry) {
 
 void SendCoinsDialog::setMinimumFee() {
     ui->radioCustomPerKilobyte->setChecked(true);
-    ui->customFee->setValue(model->node().getMinimumFee(1000));
+    ui->customFee->setValue(model->wallet().getRequiredFee(1000));
 }
 
 void SendCoinsDialog::updateFeeSectionControls() {
@@ -682,7 +688,7 @@ void SendCoinsDialog::updateMinFeeLabel() {
             tr("Pay only the required fee of %1")
                 .arg(BitcoinUnits::formatWithUnit(
                          model->getOptionsModel()->getDisplayUnit(),
-                         model->node().getMinimumFee(1000)) +
+                         model->wallet().getRequiredFee(1000)) +
                      "/kB"));
     }
 }
@@ -700,12 +706,15 @@ void SendCoinsDialog::updateSmartFeeLabel() {
         return;
     }
 
-    CFeeRate feeRate = model->node().estimateSmartFee();
+    CCoinControl coin_control;
+    updateCoinControlState(coin_control);
+    // Explicitly use only fee estimation rate for smart fee labels
+    coin_control.m_feerate.reset();
+    CFeeRate feeRate(model->wallet().getMinimumFee(1000, coin_control));
 
     ui->labelSmartFee->setText(
-        BitcoinUnits::formatWithUnit(
-            model->getOptionsModel()->getDisplayUnit(),
-            std::max(feeRate.GetFeePerK(), model->node().getMinimumFee(1000))) +
+        BitcoinUnits::formatWithUnit(model->getOptionsModel()->getDisplayUnit(),
+                                     feeRate.GetFeePerK()) +
         "/kB");
     // not enough data => minfee
     if (feeRate <= CFeeRate(Amount::zero())) {

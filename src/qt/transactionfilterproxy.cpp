@@ -19,45 +19,52 @@ const QDateTime TransactionFilterProxy::MAX_DATE =
 
 TransactionFilterProxy::TransactionFilterProxy(QObject *parent)
     : QSortFilterProxyModel(parent), dateFrom(MIN_DATE), dateTo(MAX_DATE),
-      addrPrefix(), typeFilter(ALL_TYPES), watchOnlyFilter(WatchOnlyFilter_All),
-      minAmount(), limitRows(-1), showInactive(true) {}
+      m_search_string(), typeFilter(ALL_TYPES),
+      watchOnlyFilter(WatchOnlyFilter_All), minAmount(), limitRows(-1),
+      showInactive(true) {}
 
 bool TransactionFilterProxy::filterAcceptsRow(
     int sourceRow, const QModelIndex &sourceParent) const {
     QModelIndex index = sourceModel()->index(sourceRow, 0, sourceParent);
 
-    int type = index.data(TransactionTableModel::TypeRole).toInt();
-    QDateTime datetime =
-        index.data(TransactionTableModel::DateRole).toDateTime();
-    bool involvesWatchAddress =
-        index.data(TransactionTableModel::WatchonlyRole).toBool();
-    QString address = index.data(TransactionTableModel::AddressRole).toString();
-    QString label = index.data(TransactionTableModel::LabelRole).toString();
-    Amount amount(
-        int64_t(
-            llabs(index.data(TransactionTableModel::AmountRole).toLongLong())) *
-        SATOSHI);
     int status = index.data(TransactionTableModel::StatusRole).toInt();
-
     if (!showInactive && status == TransactionStatus::Conflicted) {
         return false;
     }
+
+    int type = index.data(TransactionTableModel::TypeRole).toInt();
     if (!(TYPE(type) & typeFilter)) {
         return false;
     }
+
+    bool involvesWatchAddress =
+        index.data(TransactionTableModel::WatchonlyRole).toBool();
     if (involvesWatchAddress && watchOnlyFilter == WatchOnlyFilter_No) {
         return false;
     }
     if (!involvesWatchAddress && watchOnlyFilter == WatchOnlyFilter_Yes) {
         return false;
     }
+
+    QDateTime datetime =
+        index.data(TransactionTableModel::DateRole).toDateTime();
     if (datetime < dateFrom || datetime > dateTo) {
         return false;
     }
-    if (!address.contains(addrPrefix, Qt::CaseInsensitive) &&
-        !label.contains(addrPrefix, Qt::CaseInsensitive)) {
+
+    QString address = index.data(TransactionTableModel::AddressRole).toString();
+    QString label = index.data(TransactionTableModel::LabelRole).toString();
+    QString txid = index.data(TransactionTableModel::TxHashRole).toString();
+    if (!address.contains(m_search_string, Qt::CaseInsensitive) &&
+        !label.contains(m_search_string, Qt::CaseInsensitive) &&
+        !txid.contains(m_search_string, Qt::CaseInsensitive)) {
         return false;
     }
+
+    Amount amount(
+        int64_t(
+            llabs(index.data(TransactionTableModel::AmountRole).toLongLong())) *
+        SATOSHI);
     if (amount < minAmount) {
         return false;
     }
@@ -72,8 +79,11 @@ void TransactionFilterProxy::setDateRange(const QDateTime &from,
     invalidateFilter();
 }
 
-void TransactionFilterProxy::setAddressPrefix(const QString &_addrPrefix) {
-    this->addrPrefix = _addrPrefix;
+void TransactionFilterProxy::setSearchString(const QString &search_string) {
+    if (m_search_string == search_string) {
+        return;
+    }
+    m_search_string = search_string;
     invalidateFilter();
 }
 

@@ -17,8 +17,6 @@ from test_framework.messages import (
     ToHex,
 )
 from test_framework.mininode import (
-    mininode_lock,
-    network_thread_start,
     P2PInterface,
 )
 from test_framework.script import (
@@ -31,7 +29,7 @@ from test_framework.script import (
 )
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
-from test_framework.util import assert_equal, wait_until
+from test_framework.util import assert_equal
 
 CLTV_HEIGHT = 1351
 
@@ -69,7 +67,6 @@ def cltv_lock_to_height(node, tx, to_address, amount, height=-1):
     fundtx.rehash()
 
     # make spending tx
-    from_txid = fundtx.hash
     inputs = [{
         "txid": fundtx.hash,
         "vout": 0
@@ -102,11 +99,6 @@ class BIP65Test(BitcoinTestFramework):
 
     def run_test(self):
         self.nodes[0].add_p2p_connection(P2PInterface())
-
-        network_thread_start()
-
-        # wait_for_verack ensures that the P2P connection is fully up.
-        self.nodes[0].p2p.wait_for_verack()
 
         self.log.info("Mining {} blocks".format(CLTV_HEIGHT - 2))
         self.coinbase_blocks = self.nodes[0].generate(CLTV_HEIGHT - 2)
@@ -142,19 +134,11 @@ class BIP65Test(BitcoinTestFramework):
         block = create_block(tip, create_coinbase(CLTV_HEIGHT), block_time)
         block.nVersion = 3
         block.solve()
-        self.nodes[0].p2p.send_and_ping(msg_block(block))
-        assert_equal(int(self.nodes[0].getbestblockhash(), 16), tip)
 
-        wait_until(lambda: "reject" in self.nodes[0].p2p.last_message.keys(),
-                   lock=mininode_lock)
-        with mininode_lock:
-            assert_equal(
-                self.nodes[0].p2p.last_message["reject"].code, REJECT_OBSOLETE)
-            assert_equal(
-                self.nodes[0].p2p.last_message["reject"].reason, b'bad-version(0x00000003)')
-            assert_equal(
-                self.nodes[0].p2p.last_message["reject"].data, block.sha256)
-            del self.nodes[0].p2p.last_message["reject"]
+        with self.nodes[0].assert_debug_log(expected_msgs=['{}, bad-version(0x00000003)'.format(block.hash)]):
+            self.nodes[0].p2p.send_and_ping(msg_block(block))
+            assert_equal(int(self.nodes[0].getbestblockhash(), 16), tip)
+            self.nodes[0].p2p.sync_with_ping()
 
         self.log.info(
             "Test that invalid-according-to-cltv transactions cannot appear in a block")
@@ -202,23 +186,10 @@ class BIP65Test(BitcoinTestFramework):
         block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
 
-        self.nodes[0].p2p.send_and_ping(msg_block(block))
-        # This block is invalid
-        assert_equal(self.nodes[0].getbestblockhash(), tip)
-
-        wait_until(lambda: "reject" in self.nodes[0].p2p.last_message.keys(),
-                   lock=mininode_lock)
-        with mininode_lock:
-            assert self.nodes[0].p2p.last_message["reject"].code in [
-                REJECT_INVALID, REJECT_NONSTANDARD]
-            assert_equal(
-                self.nodes[0].p2p.last_message["reject"].data, block.sha256)
-            if self.nodes[0].p2p.last_message["reject"].code == REJECT_INVALID:
-                # Generic rejection when a block is invalid
-                assert_equal(
-                    self.nodes[0].p2p.last_message["reject"].reason, b'blk-bad-inputs')
-            else:
-                assert b'Negative locktime' in self.nodes[0].p2p.last_message["reject"].reason
+        with self.nodes[0].assert_debug_log(expected_msgs=['ConnectBlock {} failed (blk-bad-inputs'.format(block.hash)]):
+            self.nodes[0].p2p.send_and_ping(msg_block(block))
+            assert_equal(self.nodes[0].getbestblockhash(), tip)
+            self.nodes[0].p2p.sync_with_ping()
 
         self.log.info(
             "Test that a version 4 block with a valid-according-to-CLTV transaction is accepted")

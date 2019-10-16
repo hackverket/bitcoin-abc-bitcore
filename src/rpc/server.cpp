@@ -6,21 +6,20 @@
 
 #include <rpc/server.h>
 
-#include <base58.h>
 #include <config.h>
 #include <fs.h>
 #include <init.h>
+#include <key_io.h>
 #include <random.h>
 #include <sync.h>
 #include <ui_interface.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <univalue.h>
 
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
-#include <boost/bind.hpp>
 #include <boost/signals2/signal.hpp>
 
 #include <memory> // for unique_ptr
@@ -161,23 +160,15 @@ Amount AmountFromValue(const UniValue &value) {
     return amt;
 }
 
-UniValue ValueFromAmount(const Amount amount) {
-    bool sign = amount < Amount::zero();
-    Amount n_abs(sign ? -amount : amount);
-    int64_t quotient = n_abs / COIN;
-    int64_t remainder = (n_abs % COIN) / SATOSHI;
-    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
-                                              quotient, remainder));
-}
-
 UniValue ValueFromCAmount(const CAmount &amount) {
     bool sign = amount < 0;
     int64_t n_abs = (sign ? -amount : amount);
     int64_t quotient = n_abs / (COIN  / SATOSHI);
     int64_t remainder = n_abs % (COIN  / SATOSHI);
     return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
-                                              quotient, remainder));
+                quotient, remainder));
 }
+
 
 uint256 ParseHashV(const UniValue &v, std::string strName) {
     std::string strHex;
@@ -390,11 +381,10 @@ bool CRPCTable::appendCommand(const std::string &name,
     return true;
 }
 
-bool StartRPC() {
+void StartRPC() {
     LogPrint(BCLog::RPC, "Starting RPC\n");
     fRPCRunning = true;
     g_rpcSignals.Started();
-    return true;
 }
 
 void InterruptRPC() {
@@ -557,11 +547,9 @@ UniValue CRPCTable::execute(Config &config,
 
 std::vector<std::string> CRPCTable::listCommands() const {
     std::vector<std::string> commandList;
-    typedef std::map<std::string, const ContextFreeRPCCommand *> commandMap;
-
-    std::transform(mapCommands.begin(), mapCommands.end(),
-                   std::back_inserter(commandList),
-                   boost::bind(&commandMap::value_type::first, _1));
+    for (const auto &i : mapCommands) {
+        commandList.emplace_back(i.first);
+    }
     return commandList;
 }
 
@@ -595,7 +583,7 @@ void RPCUnsetTimerInterface(RPCTimerInterface *iface) {
     }
 }
 
-void RPCRunLater(const std::string &name, std::function<void(void)> func,
+void RPCRunLater(const std::string &name, std::function<void()> func,
                  int64_t nSeconds) {
     if (!timerInterface) {
         throw JSONRPCError(RPC_INTERNAL_ERROR,

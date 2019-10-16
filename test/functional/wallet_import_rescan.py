@@ -2,21 +2,22 @@
 # Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-'''
+"""Test wallet import RPCs.
+
 Test rescan behavior of importaddress, importpubkey, importprivkey, and
 importmulti RPCs with different types of keys and rescan options.
 
 In the first part of the test, node 0 creates an address for each type of
-import RPC call and node 0 sends BTC to it. Then other nodes import the
+import RPC call and node 0 sends BCH to it. Then other nodes import the
 addresses, and the test makes listtransactions and getbalance calls to confirm
 that the importing node either did or did not execute rescans picking up the
 send transactions.
 
-In the second part of the test, node 0 sends more BTC to each address, and the
+In the second part of the test, node 0 sends more BCH to each address, and the
 test makes more listtransactions and getbalance calls to confirm that the
 importing nodes pick up the new transactions regardless of whether rescans
 happened previously.
-'''
+"""
 
 import collections
 import enum
@@ -145,7 +146,7 @@ class ImportRescanTest(BitcoinTestFramework):
         # each possible type of wallet import RPC.
         for i, variant in enumerate(IMPORT_VARIANTS):
             variant.label = "label {} {}".format(i, variant)
-            variant.address = self.nodes[1].validateaddress(
+            variant.address = self.nodes[1].getaddressinfo(
                 self.nodes[1].getnewaddress(variant.label))
             variant.key = self.nodes[1].dumpprivkey(variant.address["address"])
             variant.initial_amount = 10 - (i + 1) / 4.0

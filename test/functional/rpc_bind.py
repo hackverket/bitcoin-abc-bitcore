@@ -2,8 +2,7 @@
 # Copyright (c) 2014-2016 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
-# Test for -rpcbind, as well as -rpcallowip and -rpcconnect
+"""Test running bitcoind with the -rpcbind and -rpcallowip options."""
 
 from platform import uname
 import socket
@@ -72,7 +71,7 @@ class RPCBindTest(BitcoinTestFramework):
     def run_test(self):
         # due to OS-specific network stats queries, this test works only on Linux
         if not sys.platform.startswith('linux'):
-            raise SkipTest("This test can only be run on linux.")
+            raise SkipTest("This test can only be run on Linux.")
 
         # WSL in currently not supported (refer to
         # https://reviews.bitcoinabc.org/T400 for details).

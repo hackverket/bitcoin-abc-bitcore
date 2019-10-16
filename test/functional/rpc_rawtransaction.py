@@ -2,19 +2,21 @@
 # Copyright (c) 2014-2017 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-"""rawtranscation RPCs QA test.
+"""Test the rawtranscation RPCs.
 
-# Tests the following RPCs:
-#    - createrawtransaction
-#    - signrawtransactionwithwallet
-#    - sendrawtransaction
-#    - decoderawtransaction
-#    - getrawtransaction
+Test the following RPCs:
+   - createrawtransaction
+   - signrawtransactionwithwallet
+   - sendrawtransaction
+   - decoderawtransaction
+   - getrawtransaction
 """
+
 from decimal import Decimal
 
 from collections import OrderedDict
 from io import BytesIO
+from test_framework.messages import CTransaction, ToHex
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_raw_tx
 from test_framework.util import (
@@ -24,9 +26,6 @@ from test_framework.util import (
     connect_nodes_bi,
     hex_str_to_bytes,
     bytes_to_hex_str,
-)
-from test_framework.messages import (
-    CTransaction,
 )
 
 
@@ -236,8 +235,8 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr1 = self.nodes[2].getnewaddress()
         addr2 = self.nodes[2].getnewaddress()
 
-        addr1Obj = self.nodes[2].validateaddress(addr1)
-        addr2Obj = self.nodes[2].validateaddress(addr2)
+        addr1Obj = self.nodes[2].getaddressinfo(addr1)
+        addr2Obj = self.nodes[2].getaddressinfo(addr2)
 
         # Tests for createmultisig and addmultisigaddress
         assert_raises_rpc_error(-5, "Invalid public key",
@@ -255,7 +254,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         # use balance deltas instead of absolute values
         bal = self.nodes[2].getbalance()
 
-        # send 1.2 BTC to msig adr
+        # send 1.2 BCH to msig adr
         txId = self.nodes[0].sendtoaddress(mSigObj, 1.2)
         self.sync_all()
         self.nodes[0].generate(1)
@@ -270,9 +269,9 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr2 = self.nodes[2].getnewaddress()
         addr3 = self.nodes[2].getnewaddress()
 
-        addr1Obj = self.nodes[1].validateaddress(addr1)
-        addr2Obj = self.nodes[2].validateaddress(addr2)
-        addr3Obj = self.nodes[2].validateaddress(addr3)
+        addr1Obj = self.nodes[1].getaddressinfo(addr1)
+        addr2Obj = self.nodes[2].getaddressinfo(addr2)
+        addr3Obj = self.nodes[2].getaddressinfo(addr3)
 
         mSigObj = self.nodes[2].addmultisigaddress(
             2, [addr1Obj['pubkey'], addr2Obj['pubkey'], addr3Obj['pubkey']])['address']
@@ -284,7 +283,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.nodes[0].generate(1)
         self.sync_all()
 
-        # THIS IS A INCOMPLETE FEATURE
+        # THIS IS AN INCOMPLETE FEATURE
         # NODE2 HAS TWO OF THREE KEY AND THE FUNDS SHOULD BE SPENDABLE AND
         # COUNT AT BALANCE CALCULATION
         # for now, assume the funds of a 2of3 multisig tx are not marked as
@@ -331,14 +330,14 @@ class RawTransactionsTest(BitcoinTestFramework):
         addr1 = self.nodes[1].getnewaddress()
         addr2 = self.nodes[2].getnewaddress()
 
-        addr1Obj = self.nodes[1].validateaddress(addr1)
-        addr2Obj = self.nodes[2].validateaddress(addr2)
+        addr1Obj = self.nodes[1].getaddressinfo(addr1)
+        addr2Obj = self.nodes[2].getaddressinfo(addr2)
 
         self.nodes[1].addmultisigaddress(
             2, [addr1Obj['pubkey'], addr2Obj['pubkey']])['address']
         mSigObj = self.nodes[2].addmultisigaddress(
             2, [addr1Obj['pubkey'], addr2Obj['pubkey']])['address']
-        mSigObjValid = self.nodes[2].validateaddress(mSigObj)
+        mSigObjValid = self.nodes[2].getaddressinfo(mSigObj)
 
         txId = self.nodes[0].sendtoaddress(mSigObj, 2.2)
         decTx = self.nodes[0].gettransaction(txId)
@@ -367,7 +366,7 @@ class RawTransactionsTest(BitcoinTestFramework):
             rawTx2, inputs)
         self.log.debug(rawTxPartialSigned1)
         # node1 only has one key, can't comp. sign the tx
-        assert_equal(rawTxPartialSigned['complete'], False)
+        assert_equal(rawTxPartialSigned1['complete'], False)
 
         rawTxPartialSigned2 = self.nodes[2].signrawtransactionwithwallet(
             rawTx2, inputs)
@@ -474,6 +473,24 @@ class RawTransactionsTest(BitcoinTestFramework):
         rawtx = self.nodes[0].createrawtransaction(inputs, outputs)
         decrawtx = self.nodes[0].decoderawtransaction(rawtx)
         assert_equal(decrawtx['vin'][0]['sequence'], 4294967294)
+
+        ####################################
+        # TRANSACTION VERSION NUMBER TESTS #
+        ####################################
+
+        # Test the minimum transaction version number that fits in a signed 32-bit integer.
+        tx = CTransaction()
+        tx.nVersion = -0x80000000
+        rawtx = ToHex(tx)
+        decrawtx = self.nodes[0].decoderawtransaction(rawtx)
+        assert_equal(decrawtx['version'], -0x80000000)
+
+        # Test the maximum transaction version number that fits in a signed 32-bit integer.
+        tx = CTransaction()
+        tx.nVersion = 0x7fffffff
+        rawtx = ToHex(tx)
+        decrawtx = self.nodes[0].decoderawtransaction(rawtx)
+        assert_equal(decrawtx['version'], 0x7fffffff)
 
 
 if __name__ == '__main__':

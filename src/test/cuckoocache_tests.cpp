@@ -24,19 +24,7 @@
  *  expected behavior. For example improving the hit rate may cause some tests
  *  using BOOST_CHECK_CLOSE to fail.
  */
-FastRandomContext local_rand_ctx(true);
-
 BOOST_AUTO_TEST_SUITE(cuckoocache_tests);
-
-/**
- * insecure_GetRandHash fills in a uint256 from local_rand_ctx
- */
-void insecure_GetRandHash(uint256 &t) {
-    uint32_t *ptr = (uint32_t *)t.begin();
-    for (uint8_t j = 0; j < 8; ++j) {
-        *(ptr++) = local_rand_ctx.rand32();
-    }
-}
 
 /**
  * Test that no values not inserted into the cache are read out of it.
@@ -44,18 +32,15 @@ void insecure_GetRandHash(uint256 &t) {
  * There are no repeats in the first 200000 insecure_GetRandHash calls
  */
 BOOST_AUTO_TEST_CASE(test_cuckoocache_no_fakes) {
-    local_rand_ctx = FastRandomContext(true);
+    SeedInsecureRand(true);
     CuckooCache::cache<uint256, SignatureCacheHasher> cc{};
     size_t megabytes = 4;
     cc.setup_bytes(megabytes << 20);
-    uint256 v;
     for (int x = 0; x < 100000; ++x) {
-        insecure_GetRandHash(v);
-        cc.insert(v);
+        cc.insert(InsecureRand256());
     }
     for (int x = 0; x < 100000; ++x) {
-        insecure_GetRandHash(v);
-        BOOST_CHECK(!cc.contains(v, false));
+        BOOST_CHECK(!cc.contains(InsecureRand256(), false));
     }
 };
 
@@ -63,8 +48,9 @@ BOOST_AUTO_TEST_CASE(test_cuckoocache_no_fakes) {
  * This helper returns the hit rate when megabytes*load worth of entries are
  * inserted into a megabytes sized cache
  */
-template <typename Cache> double test_cache(size_t megabytes, double load) {
-    local_rand_ctx = FastRandomContext(true);
+template <typename Cache>
+static double test_cache(size_t megabytes, double load) {
+    SeedInsecureRand(true);
     std::vector<uint256> hashes;
     Cache set{};
     size_t bytes = megabytes * (1 << 20);
@@ -74,7 +60,7 @@ template <typename Cache> double test_cache(size_t megabytes, double load) {
     for (uint32_t i = 0; i < n_insert; ++i) {
         uint32_t *ptr = (uint32_t *)hashes[i].begin();
         for (uint8_t j = 0; j < 8; ++j) {
-            *(ptr++) = local_rand_ctx.rand32();
+            *(ptr++) = InsecureRand32();
         }
     }
     /**
@@ -84,12 +70,12 @@ template <typename Cache> double test_cache(size_t megabytes, double load) {
      */
     std::vector<uint256> hashes_insert_copy = hashes;
     /** Do the insert */
-    for (uint256 &h : hashes_insert_copy) {
+    for (const uint256 &h : hashes_insert_copy) {
         set.insert(h);
     }
     /** Count the hits */
     uint32_t count = 0;
-    for (uint256 &h : hashes) {
+    for (const uint256 &h : hashes) {
         count += set.contains(h, false);
     }
     double hit_rate = double(count) / double(n_insert);
@@ -113,7 +99,7 @@ template <typename Cache> double test_cache(size_t megabytes, double load) {
  * how you measure around load 1.0 as after load 1.0 your normalized hit rate
  * becomes effectively perfect, ignoring freshness.
  */
-double normalize_hit_rate(double hits, double load) {
+static double normalize_hit_rate(double hits, double load) {
     return hits * std::max(load, 1.0);
 }
 
@@ -135,9 +121,9 @@ BOOST_AUTO_TEST_CASE(cuckoocache_hit_rate_ok) {
 
 /** This helper checks that erased elements are preferentially inserted onto and
  * that the hit rate of "fresher" keys is reasonable*/
-template <typename Cache> void test_cache_erase(size_t megabytes) {
+template <typename Cache> static void test_cache_erase(size_t megabytes) {
     double load = 1;
-    local_rand_ctx = FastRandomContext(true);
+    SeedInsecureRand(true);
     std::vector<uint256> hashes;
     Cache set{};
     size_t bytes = megabytes * (1 << 20);
@@ -147,7 +133,7 @@ template <typename Cache> void test_cache_erase(size_t megabytes) {
     for (uint32_t i = 0; i < n_insert; ++i) {
         uint32_t *ptr = (uint32_t *)hashes[i].begin();
         for (uint8_t j = 0; j < 8; ++j) {
-            *(ptr++) = local_rand_ctx.rand32();
+            *(ptr++) = InsecureRand32();
         }
     }
     /** We make a copy of the hashes because future optimizations of the
@@ -169,7 +155,7 @@ template <typename Cache> void test_cache_erase(size_t megabytes) {
         set.insert(hashes_insert_copy[i]);
     }
 
-    /** elements that we marked erased but that are still there */
+    /** elements that we marked as erased but are still there */
     size_t count_erased_but_contained = 0;
     /** elements that we did not erase but are older */
     size_t count_stale = 0;
@@ -204,9 +190,10 @@ BOOST_AUTO_TEST_CASE(cuckoocache_erase_ok) {
         megabytes);
 }
 
-template <typename Cache> void test_cache_erase_parallel(size_t megabytes) {
+template <typename Cache>
+static void test_cache_erase_parallel(size_t megabytes) {
     double load = 1;
-    local_rand_ctx = FastRandomContext(true);
+    SeedInsecureRand(true);
     std::vector<uint256> hashes;
     Cache set{};
     size_t bytes = megabytes * (1 << 20);
@@ -216,7 +203,7 @@ template <typename Cache> void test_cache_erase_parallel(size_t megabytes) {
     for (uint32_t i = 0; i < n_insert; ++i) {
         uint32_t *ptr = (uint32_t *)hashes[i].begin();
         for (uint8_t j = 0; j < 8; ++j) {
-            *(ptr++) = local_rand_ctx.rand32();
+            *(ptr++) = InsecureRand32();
         }
     }
     /** We make a copy of the hashes because future optimizations of the
@@ -297,7 +284,7 @@ BOOST_AUTO_TEST_CASE(cuckoocache_erase_parallel_ok) {
         CuckooCache::cache<uint256, SignatureCacheHasher>>(megabytes);
 }
 
-template <typename Cache> void test_cache_generations() {
+template <typename Cache> static void test_cache_generations() {
     // This test checks that for a simulation of network activity, the fresh hit
     // rate is never below 99%, and the number of times that it is worse than
     // 99.9% are less than 1% of the time.
@@ -315,10 +302,10 @@ template <typename Cache> void test_cache_generations() {
     // iterations with non-deterministic values, so it isn't "overfit" to the
     // specific entropy in FastRandomContext(true) and implementation of the
     // cache.
-    local_rand_ctx = FastRandomContext(true);
+    SeedInsecureRand(true);
 
     // block_activity models a chunk of network activity. n_insert elements are
-    // adde to the cache. The first and last n/4 are stored for removal later
+    // added to the cache. The first and last n/4 are stored for removal later
     // and the middle n/2 are not stored. This models a network which uses half
     // the signatures of recently (since the last block) added transactions
     // immediately and never uses the other half.
@@ -331,7 +318,7 @@ template <typename Cache> void test_cache_generations() {
             for (uint32_t i = 0; i < n_insert; ++i) {
                 uint32_t *ptr = (uint32_t *)inserts[i].begin();
                 for (uint8_t j = 0; j < 8; ++j) {
-                    *(ptr++) = local_rand_ctx.rand32();
+                    *(ptr++) = InsecureRand32();
                 }
             }
             for (uint32_t i = 0; i < n_insert / 4; ++i) {
@@ -340,7 +327,7 @@ template <typename Cache> void test_cache_generations() {
             for (uint32_t i = n_insert - (n_insert / 4); i < n_insert; ++i) {
                 reads.push_back(inserts[i]);
             }
-            for (auto h : inserts) {
+            for (const auto &h : inserts) {
                 c.insert(h);
             }
         }

@@ -13,10 +13,8 @@
 #include <rpc/client.h>
 #include <rpc/protocol.h>
 #include <support/events.h>
-#include <util.h>
-#include <utilstrencodings.h>
-
-#include <boost/filesystem/operations.hpp>
+#include <util/strencodings.h>
+#include <util/system.h>
 
 #include <event2/buffer.h>
 #include <event2/keyvalq_struct.h>
@@ -24,6 +22,9 @@
 #include <univalue.h>
 
 #include <cstdio>
+#include <tuple>
+
+const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
 static const char DEFAULT_RPCCONNECT[] = "127.0.0.1";
 static const int DEFAULT_HTTP_CLIENT_TIMEOUT = 900;
@@ -37,8 +38,11 @@ static void SetupCliArgs() {
         CreateBaseChainParams(CBaseChainParams::TESTNET);
 
     gArgs.AddArg("-?", _("This help message"), false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-version", "Print version and exit", false,
+                 OptionsCategory::OPTIONS);
     gArgs.AddArg("-conf=<file>",
-                 strprintf(_("Specify configuration file (default: %s)"),
+                 strprintf(_("Specify configuration file. Relative paths will "
+                             "be prefixed by datadir location. (default: %s)"),
                            BITCOIN_CONF_FILENAME),
                  false, OptionsCategory::OPTIONS);
     gArgs.AddArg("-datadir=<dir>", _("Specify data directory"), false,
@@ -61,6 +65,11 @@ static void SetupCliArgs() {
         "-rpcconnect=<ip>",
         strprintf(_("Send commands to node running on <ip> (default: %s)"),
                   DEFAULT_RPCCONNECT),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-rpccookiefile=<loc>",
+        _("Location of the auth cookie. Relative paths will be prefixed by a "
+          "net-specific datadir location. (default: data dir)"),
         false, OptionsCategory::OPTIONS);
     gArgs.AddArg(
         "-rpcport=<port>",
@@ -96,6 +105,22 @@ static void SetupCliArgs() {
         _("Send RPC for non-default wallet on RPC server (needs to exactly "
           "match corresponding -wallet option passed to bitcoind)"),
         false, OptionsCategory::OPTIONS);
+
+    // Hidden
+    gArgs.AddArg("-h", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-help", "", false, OptionsCategory::HIDDEN);
+}
+
+/** libevent event log callback */
+static void libevent_log_cb(int severity, const char *msg) {
+#ifndef EVENT_LOG_ERR
+// EVENT_LOG_ERR was added in 2.0.19; but before then _EVENT_LOG_ERR existed.
+#define EVENT_LOG_ERR _EVENT_LOG_ERR
+#endif
+    // Ignore everything other than errors
+    if (severity >= EVENT_LOG_ERR) {
+        throw std::runtime_error(strprintf("libevent error: %s", msg));
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -122,7 +147,12 @@ static int AppInitRPC(int argc, char *argv[]) {
     // Parameters
     //
     SetupCliArgs();
-    gArgs.ParseParameters(argc, argv);
+    std::string error;
+    if (!gArgs.ParseParameters(argc, argv, error)) {
+        fprintf(stderr, "Error parsing command line arguments: %s\n",
+                error.c_str());
+        return EXIT_FAILURE;
+    }
     if (argc < 2 || HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
         std::string strUsage =
             PACKAGE_NAME " RPC client version " + FormatFullVersion() + "\n";
@@ -154,10 +184,9 @@ static int AppInitRPC(int argc, char *argv[]) {
                 gArgs.GetArg("-datadir", "").c_str());
         return EXIT_FAILURE;
     }
-    try {
-        gArgs.ReadConfigFiles();
-    } catch (const std::exception &e) {
-        fprintf(stderr, "Error reading configuration file: %s\n", e.what());
+    if (!gArgs.ReadConfigFiles(error, true)) {
+        fprintf(stderr, "Error reading configuration file: %s\n",
+                error.c_str());
         return EXIT_FAILURE;
     }
     // Check for -testnet or -regtest parameter (BaseParams() calls are only
@@ -185,7 +214,7 @@ struct HTTPReply {
     std::string body;
 };
 
-const char *http_errorstring(int code) {
+static const char *http_errorstring(int code) {
     switch (code) {
 #if LIBEVENT_VERSION_NUMBER >= 0x02010300
         case EVREQ_HTTP_TIMEOUT:
@@ -242,6 +271,7 @@ static void http_error_cb(enum evhttp_request_error err, void *ctx) {
  */
 class BaseRequestHandler {
 public:
+    virtual ~BaseRequestHandler() {}
     virtual UniValue PrepareRequest(const std::string &method,
                                     const std::vector<std::string> &args) = 0;
     virtual UniValue ProcessReply(const UniValue &batch_in) = 0;
@@ -257,6 +287,9 @@ public:
     /** Create a simulated `getinfo` request. */
     UniValue PrepareRequest(const std::string &method,
                             const std::vector<std::string> &args) override {
+        if (!args.empty()) {
+            throw std::runtime_error("-getinfo takes no arguments");
+        }
         UniValue result(UniValue::VARR);
         result.push_back(
             JSONRPCRequestObj("getnetworkinfo", NullUniValue, ID_NETWORKINFO));
@@ -372,17 +405,12 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
 
     // Get credentials
     std::string strRPCUserColonPass;
+    bool failedToGetAuthCookie = false;
     if (gArgs.GetArg("-rpcpassword", "") == "") {
         // Try fall back to cookie-based authentication if no password is
         // provided
         if (!GetAuthCookie(&strRPCUserColonPass)) {
-            throw std::runtime_error(strprintf(
-                _("Could not locate RPC credentials. No authentication cookie "
-                  "could be found, and RPC password is not set.  See "
-                  "-rpcpassword and -stdinrpcpass.  Configuration file: (%s)"),
-                GetConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME))
-                    .string()
-                    .c_str()));
+            failedToGetAuthCookie = true;
         }
     } else {
         strRPCUserColonPass = gArgs.GetArg("-rpcuser", "") + ":" +
@@ -429,13 +457,30 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
     event_base_dispatch(base.get());
 
     if (response.status == 0) {
-        throw CConnectionFailed(strprintf(
-            "couldn't connect to server: %s (code %d)\n(make sure server is "
-            "running and you are connecting to the correct RPC port)",
-            http_errorstring(response.error), response.error));
+        std::string responseErrorMessage;
+        if (response.error != -1) {
+            responseErrorMessage =
+                strprintf(" (error code %d - \"%s\")", response.error,
+                          http_errorstring(response.error));
+        }
+        throw CConnectionFailed(
+            strprintf("Could not connect to the server %s:%d%s\n\nMake sure "
+                      "the bitcoind server is running and that you are "
+                      "connecting to the correct RPC port.",
+                      host, port, responseErrorMessage));
     } else if (response.status == HTTP_UNAUTHORIZED) {
-        throw std::runtime_error(
-            "incorrect rpcuser or rpcpassword (authorization failed)");
+        if (failedToGetAuthCookie) {
+            throw std::runtime_error(strprintf(
+                _("Could not locate RPC credentials. No authentication cookie "
+                  "could be found, and RPC password is not set.  See "
+                  "-rpcpassword and -stdinrpcpass.  Configuration file: (%s)"),
+                GetConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME))
+                    .string()
+                    .c_str()));
+        } else {
+            throw std::runtime_error(
+                "Authorization failed: Incorrect rpcuser or rpcpassword");
+        }
     } else if (response.status >= 400 && response.status != HTTP_BAD_REQUEST &&
                response.status != HTTP_NOT_FOUND &&
                response.status != HTTP_INTERNAL_SERVER_ERROR) {
@@ -459,7 +504,7 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
     return reply;
 }
 
-int CommandLineRPC(int argc, char *argv[]) {
+static int CommandLineRPC(int argc, char *argv[]) {
     std::string strPrint;
     int nRet = 0;
     try {
@@ -573,11 +618,16 @@ int CommandLineRPC(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+#ifdef WIN32
+    util::WinCmdLineArgs winArgs;
+    std::tie(argc, argv) = winArgs.get();
+#endif
     SetupEnvironment();
     if (!SetupNetworking()) {
         fprintf(stderr, "Error: Initializing networking failed\n");
         return EXIT_FAILURE;
     }
+    event_set_log_callback(&libevent_log_cb);
 
     try {
         int ret = AppInitRPC(argc, argv);

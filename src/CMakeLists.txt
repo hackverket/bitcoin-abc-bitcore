@@ -1,7 +1,7 @@
 # Copyright (c) 2017 The Bitcoin developers
 
 cmake_minimum_required(VERSION 3.5)
-project(BitcoinABC)
+project(bitcoind)
 
 set(CMAKE_CXX_STANDARD 14)
 
@@ -61,13 +61,20 @@ add_cxx_compiler_flag_with_fallback(CMAKE_CXX_FLAGS_DEBUG -Og -O0)
 # type is selected.
 string(APPEND CMAKE_CXX_FLAGS_DEBUG " -DDEBUG -DDEBUG_LOCKORDER")
 
+# Add -ftrapv when building in Debug
+add_compiler_flags_to_var(CMAKE_CXX_FLAGS_DEBUG CXX -ftrapv)
+
 # Ensure that WINDRES_PREPROC is enabled when using windres.
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	# Ensure that WINDRES_PREPROC is enabled when using windres.
 	list(APPEND CMAKE_RC_FLAGS "-DWINDRES_PREPROC")
 
 	# Build all static so there is no dll file to distribute.
-	add_compiler_flag(-static)
+	add_compiler_flags(-static)
+endif()
+
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+	add_definitions(-DMAC_OSX)
 endif()
 
 if(ENABLE_REDUCE_EXPORTS)
@@ -81,48 +88,51 @@ if(ENABLE_REDUCE_EXPORTS)
 	endif()
 
 	# Also hide symbols from static libraries
-	add_linker_flag(-Wl,--exclude-libs,ALL)
+	add_linker_flags(-Wl,--exclude-libs,ALL)
 endif()
 
 # Enable statically linking libstdc++
 if(ENABLE_STATIC_LIBSTDCXX)
-	add_linker_flag(-static-libstdc++)
+	add_linker_flags(-static-libstdc++)
 endif()
 
-# All windows code is PIC, forcing it on just adds useless compile warnings
-if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	add_compiler_flag(-fPIC)
-endif()
-	
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 if(ENABLE_HARDENING)
 	# Enable stack protection
-	add_cxx_compiler_flag(-fstack-protector-all -Wstack-protector)
-	
+	add_cxx_compiler_flags(-fstack-protector-all -Wstack-protector)
+
 	# Enable some buffer overflow checking
-	add_compiler_flag(-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2)
-	
+	add_compiler_flags(-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2)
+
 	# Enable ASLR (these flags are primarily targeting MinGw)
-	add_linker_flag(-Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
-	
+	add_linker_flags(-Wl,--dynamicbase -Wl,--nxcompat -Wl,--high-entropy-va)
+
 	# Make the relocated sections read-only
-	add_linker_flag(-Wl,-z,relro -Wl,-z,now)
+	add_linker_flags(-Wl,-z,relro -Wl,-z,now)
 
 	# CMake provides the POSITION_INDEPENDENT_CODE property to set PIC/PIE.
 	# Unfortunately setting the -pie linker flag this way require CMake >= 3.14,
 	# which is not widely distributed at the time of writing.
-	# FIXME: use the POSITION_INDEPENDENT_CODE property instead
-	if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-		add_compiler_flag(-fPIE)
-		add_linker_flag(-pie)
-	else()
+	# FIXME: remove the fallback case when cmake >= 3.14 get enforced.
+	if(POLICY CMP0083)
+		cmake_policy(SET CMP0083 NEW)
+		include(CheckPIESupported)
+		check_pie_supported()
+	elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		add_compiler_flags(-fPIE)
+		add_linker_flags(-pie)
+	endif()
+
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		# MinGw provides its own libssp for stack smashing protection
 		link_libraries(ssp)
 	endif()
 endif()
 
 # Enable warning
-add_c_compiler_flag(-Wnested-externs -Wstrict-prototypes)
-add_compiler_flag(
+add_c_compiler_flags(-Wnested-externs -Wstrict-prototypes)
+add_compiler_flags(
 	-Wall
 	-Wextra
 	-Wformat
@@ -131,17 +141,19 @@ add_compiler_flag(
 	-Wcast-align
 	-Wunused-parameter
 	-Wmissing-braces
-	# FIXME: Activating this flag cause cmake to fail on leveldb.
-	# -Wthread-safety-analysis
+	-Wthread-safety-analysis
 	-Wshadow
+	-Wrange-loop-analysis
+	-Wredundant-decls
+	-Wredundant-move
 )
 
 option(EXTRA_WARNINGS "Enable extra warnings" OFF)
 if(EXTRA_WARNINGS)
-	add_cxx_compiler_flag(-Wsuggest-override)
+	add_cxx_compiler_flags(-Wsuggest-override)
 else()
-	add_compiler_flag(-Wno-unused-parameter)
-	add_compiler_flag(-Wno-implicit-fallthrough)
+	add_compiler_flags(-Wno-unused-parameter)
+	add_compiler_flags(-Wno-implicit-fallthrough)
 endif()
 
 # Create a target for OpenSSL
@@ -158,8 +170,59 @@ add_subdirectory(leveldb)
 add_subdirectory(secp256k1)
 add_subdirectory(univalue)
 
+# Find the git root, and returns the full path to the .git/logs/HEAD file if
+# it exists.
+function(find_git_head_logs_file RESULT)
+	find_package(Git)
+	if(GIT_FOUND)
+		execute_process(
+			COMMAND "${GIT_EXECUTABLE}" "rev-parse" "--show-toplevel"
+			WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+			OUTPUT_VARIABLE GIT_ROOT
+			RESULT_VARIABLE GIT_RESULT
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+		)
+
+		if(GIT_RESULT EQUAL 0)
+			set(GIT_LOGS_DIR "${GIT_ROOT}/.git/logs")
+			set(GIT_HEAD_LOGS_FILE "${GIT_LOGS_DIR}/HEAD")
+			# If the .git/logs/HEAD, create it
+			if(NOT EXISTS "${GIT_HEAD_LOGS_FILE}")
+				# FIXME No longer needed once cmake > 3.10 get enforced.
+				file(MAKE_DIRECTORY "${GIT_LOGS_DIR}")
+				# FIXME Replace with file(TOUCH) when cmake > 3.12 get enforced.
+				file(APPEND "${GIT_HEAD_LOGS_FILE}" "")
+			endif()
+			set(${RESULT} "${GIT_HEAD_LOGS_FILE}" PARENT_SCOPE)
+		endif()
+	endif()
+endfunction()
+
+find_git_head_logs_file(GIT_HEAD_LOGS_FILE)
+
+set(OBJ_DIR "${CMAKE_CURRENT_BINARY_DIR}/obj")
+file(MAKE_DIRECTORY "${OBJ_DIR}")
+set(BUILD_HEADER "${OBJ_DIR}/build.h")
+set(BUILD_HEADER_TMP "${BUILD_HEADER}.tmp")
+
+add_custom_command(
+	DEPENDS
+		"${GIT_HEAD_LOGS_FILE}"
+		"${CMAKE_SOURCE_DIR}/share/genbuild.sh"
+	OUTPUT
+		"${BUILD_HEADER}"
+	COMMAND
+		"${CMAKE_SOURCE_DIR}/share/genbuild.sh"
+		"${BUILD_HEADER_TMP}"
+		"${CMAKE_SOURCE_DIR}"
+	COMMAND
+		${CMAKE_COMMAND} -E copy_if_different "${BUILD_HEADER_TMP}" "${BUILD_HEADER}"
+	COMMAND
+		${CMAKE_COMMAND} -E remove "${BUILD_HEADER_TMP}"
+)
+
 # Because the Bitcoin ABc source code is disorganised, we
-# end up with a bunch of libraries without any aparent
+# end up with a bunch of libraries without any apparent
 # cohesive structure. This is inherited from Bitcoin Core
 # and reflecting this.
 # TODO: Improve the structure once cmake is rocking.
@@ -182,18 +245,21 @@ add_library(util
 	sync.cpp
 	threadinterrupt.cpp
 	uint256.cpp
-	util.cpp
-	utilmoneystr.cpp
-	utilstrencodings.cpp
-	utiltime.cpp
+	util/system.cpp
+	util/moneystr.cpp
+	util/strencodings.cpp
+	util/time.cpp
 	util/bytevectorhash.cpp
+
+	# obj/build.h
+	"${BUILD_HEADER}"
 )
 
-target_compile_definitions(util PUBLIC HAVE_CONFIG_H)
+target_compile_definitions(util PUBLIC HAVE_CONFIG_H HAVE_BUILD_INFO)
 target_include_directories(util
 	PUBLIC
 		.
-		# To access the config.
+		# To access the config/ and obj/ directories
 		${CMAKE_CURRENT_BINARY_DIR}
 )
 
@@ -229,10 +295,20 @@ if(ENABLE_GLIBC_BACK_COMPAT)
 	target_compile_definitions(util PRIVATE "-DFDELT_TYPE=${FDELT_TYPE}")
 
 	# Wrap some glibc functions with ours
-	add_linker_flag(-Wl,--wrap=__divmoddi4)
-	add_linker_flag(-Wl,--wrap=log2f)
+	add_linker_flags(-Wl,--wrap=__divmoddi4)
+	add_linker_flags(-Wl,--wrap=log2f)
+
+	if(NOT HAVE_LARGE_FILE_SUPPORT)
+		add_linker_flags(-Wl,--wrap=fcntl -Wl,--wrap=fcntl64)
+	endif()
 
 	target_sources(util PRIVATE compat/glibc_compat.cpp)
+endif()
+
+# Enable LFS (Large File Support) on targets that don't have it natively.
+if(NOT HAVE_LARGE_FILE_SUPPORT)
+	add_compiler_flags(-D_FILE_OFFSET_BITS=64)
+	add_linker_flags(-Wl,--large-address-aware)
 endif()
 
 # Target specific configs
@@ -246,12 +322,12 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 
 	find_library(WS2_32_LIBRARY NAMES ws2_32)
 	target_link_libraries(util ${WS2_32_LIBRARY})
-	
+
 	target_compile_definitions(util PUBLIC BOOST_THREAD_USE_LIB)
 endif()
 
 # Boost packages
-set(BOOST_PACKAGES_REQUIRED chrono filesystem program_options thread)
+set(BOOST_PACKAGES_REQUIRED chrono filesystem thread)
 
 function(prepend var prefix)
 	set(listVar "")
@@ -281,24 +357,37 @@ add_library(common
 	consensus/merkle.cpp
 	coins.cpp
 	compressor.cpp
-	dstencode.cpp
 	feerate.cpp
 	globals.cpp
 	core_read.cpp
 	core_write.cpp
 	key.cpp
+	key_io.cpp
 	keystore.cpp
 	netaddress.cpp
 	netbase.cpp
 	primitives/block.cpp
 	protocol.cpp
 	scheduler.cpp
-	script/sign.cpp
-	script/standard.cpp
 	warnings.cpp
 )
 
 target_link_libraries(common util secp256k1)
+
+# script library
+add_library(script
+	script/bitcoinconsensus.cpp
+	script/bitfield.cpp
+	script/interpreter.cpp
+	script/ismine.cpp
+	script/script.cpp
+	script/script_error.cpp
+	script/sigencoding.cpp
+	script/sign.cpp
+	script/standard.cpp
+)
+
+target_link_libraries(script common)
 
 # libbitcoinconsensus
 add_library(bitcoinconsensus
@@ -306,22 +395,18 @@ add_library(bitcoinconsensus
 	hash.cpp
 	primitives/transaction.cpp
 	pubkey.cpp
-	script/bitcoinconsensus.cpp
-	script/interpreter.cpp
-	script/script.cpp
-	script/script_error.cpp
-	script/sigencoding.cpp
 	uint256.cpp
-	utilstrencodings.cpp
+	util/strencodings.cpp
 )
 
-target_link_libraries(bitcoinconsensus common)
+target_link_libraries(bitcoinconsensus script)
 
 # Bitcoin server facilities
 add_library(server
-	addrman.cpp
 	addrdb.cpp
+	addrman.cpp
 	avalanche.cpp
+	banman.cpp
 	bloom.cpp
 	blockencodings.cpp
 	blockfilter.cpp
@@ -330,6 +415,7 @@ add_library(server
 	config.cpp
 	consensus/activation.cpp
 	consensus/tx_verify.cpp
+	flatfile.cpp
 	globals.cpp
 	httprpc.cpp
 	httpserver.cpp
@@ -359,7 +445,6 @@ add_library(server
 	rpc/server.cpp
 	script/scriptcache.cpp
 	script/sigcache.cpp
-	script/ismine.cpp
 	timedata.cpp
 	torcontrol.cpp
 	txdb.cpp
@@ -426,6 +511,9 @@ if(BUILD_BITCOIN_SEEDER)
 	add_subdirectory(seeder)
 endif()
 
+include(BinaryTest)
+include(InstallationHelper)
+
 # bitcoin-cli
 if(BUILD_BITCOIN_CLI)
 	add_executable(bitcoin-cli bitcoin-cli.cpp)
@@ -434,6 +522,11 @@ if(BUILD_BITCOIN_CLI)
 	endif()
 
 	target_link_libraries(bitcoin-cli common rpcclient Event)
+
+	add_to_symbols_check(bitcoin-cli)
+	add_to_security_check(bitcoin-cli)
+
+	install_target(bitcoin-cli)
 endif()
 
 # bitcoin-tx
@@ -444,6 +537,11 @@ if(BUILD_BITCOIN_TX)
 	endif()
 
 	target_link_libraries(bitcoin-tx bitcoinconsensus)
+
+	add_to_symbols_check(bitcoin-tx)
+	add_to_security_check(bitcoin-tx)
+
+	install_target(bitcoin-tx)
 endif()
 
 # bitcoind
@@ -452,6 +550,10 @@ target_link_libraries(bitcoind server)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	target_sources(bitcoind PRIVATE bitcoind-res.rc)
 endif()
+add_to_symbols_check(bitcoind)
+add_to_security_check(bitcoind)
+
+install_target(bitcoind)
 
 # Bitcoin-qt
 if(BUILD_BITCOIN_QT)

@@ -80,6 +80,9 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet)
     ui->bitcoinAtStartup->setText(
         ui->bitcoinAtStartup->text().arg(tr(PACKAGE_NAME)));
 
+    ui->openBitcoinConfButton->setToolTip(
+        ui->openBitcoinConfButton->toolTip().arg(tr(PACKAGE_NAME)));
+
     ui->lang->setToolTip(ui->lang->toolTip().arg(tr(PACKAGE_NAME)));
     ui->lang->addItem(QString("(") + tr("default") + QString(")"),
                       QVariant(""));
@@ -226,6 +229,22 @@ void OptionsDialog::on_resetButton_clicked() {
         /* reset all options and close GUI */
         model->Reset();
         QApplication::quit();
+    }
+}
+
+void OptionsDialog::on_openBitcoinConfButton_clicked() {
+    /* explain the purpose of the config file */
+    QMessageBox::information(
+        this, tr("Configuration options"),
+        tr("The configuration file is used to specify advanced user options "
+           "which override GUI settings. Additionally, any command-line "
+           "options will override this configuration file."));
+
+    /* show an error if there was some problem opening the file */
+    if (!GUIUtil::openBitcoinConf()) {
+        QMessageBox::critical(
+            this, tr("Error"),
+            tr("The configuration file could not be opened."));
     }
 }
 

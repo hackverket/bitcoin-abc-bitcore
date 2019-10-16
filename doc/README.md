@@ -9,7 +9,7 @@ To download Bitcoin ABC, visit [bitcoinabc.org](https://download.bitcoinabc.org/
 
 Running
 ---------------------
-The following are some helpful notes on how to run Bitcoin on your native platform.
+The following are some helpful notes on how to run Bitcoin ABC on your native platform.
 
 ### Unix
 
@@ -22,7 +22,7 @@ Unpack the files into a directory and run:
 
 Unpack the files into a directory, and then run bitcoin-qt.exe.
 
-### OS X
+### macOS
 
 Drag bitcoin-abc to your applications folder, and then run bitcoin-abc.
 
@@ -34,9 +34,10 @@ for help and more information.
 
 Building
 ---------------------
-The following are developer notes on how to build Bitcoin on your native platform. They are not complete guides, but include notes on the necessary libraries, compile flags, etc.
+The following are developer notes on how to build Bitcoin ABC on your native platform. They are not complete guides, but include notes on the necessary libraries, compile flags, etc.
 
-- [OS X Build Notes](build-osx.md)
+- [Dependencies](dependencies.md)
+- [macOS Build Notes](build-osx.md)
 - [Unix Build Notes](build-unix.md)
 - [Windows Build Notes](build-windows.md)
 - [Gitian Building Guide](gitian-building.md)
