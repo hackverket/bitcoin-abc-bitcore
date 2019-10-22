@@ -12,6 +12,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import *
 from test_framework.script import *
 from test_framework.mininode import *
+from test_framework.messages import COIN
 import binascii
 from test_framework.blocktools import *
 from test_framework.key import CECKey
@@ -110,7 +111,7 @@ class AddressIndexTest(BitcoinTestFramework):
 
         # Check that balances are correct
         balance0 = self.nodes[1].getaddressbalance("2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br")
-        assert_equal(balance0["balance"], 45 * 100000000)
+        assert_equal(balance0["balance"], 45 * COIN)
 
         # Check that outputs with the same address will only return one txid
         self.log.info("Testing for txid uniqueness...")
@@ -135,7 +136,7 @@ class AddressIndexTest(BitcoinTestFramework):
         # Check that balances are correct
         self.log.info("Testing balances...")
         balance0 = self.nodes[1].getaddressbalance("2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br")
-        assert_equal(balance0["balance"], 45 * 100000000 + 21)
+        assert_equal(balance0["balance"], 45 * COIN + 21)
 
         # Check that balances are correct after spending
         self.log.info("Testing balances after spending...")
@@ -148,7 +149,7 @@ class AddressIndexTest(BitcoinTestFramework):
         unspent = self.nodes[0].listunspent()
         tx = CTransaction()
         tx.vin = [CTxIn(COutPoint(int(unspent[0]["txid"], 16), unspent[0]["vout"]))]
-        amount = int(unspent[0]["amount"] * 100000000 - 100000)
+        amount = int(unspent[0]["amount"] * COIN - 100000)
         tx.vout = [CTxOut(amount, scriptPubKey2)]
         tx.rehash()
         signed_tx = self.nodes[0].signrawtransactionwithwallet(binascii.hexlify(tx.serialize()).decode("utf-8"))
@@ -160,7 +161,7 @@ class AddressIndexTest(BitcoinTestFramework):
 
         tx = CTransaction()
         tx.vin = [CTxIn(COutPoint(int(spending_txid, 16), 0))]
-        send_amount = 1 * 100000000 + 12840
+        send_amount = 1 * COIN + 12840
         change_amount = amount - send_amount - 10000
         tx.vout = [CTxOut(change_amount, scriptPubKey2), CTxOut(send_amount, scriptPubKey)]
         tx.rehash()
@@ -241,7 +242,7 @@ class AddressIndexTest(BitcoinTestFramework):
 
         tx = CTransaction()
         tx.vin = [CTxIn(COutPoint(int(unspent[0]["txid"], 16), unspent[0]["vout"]))]
-        amount = int(unspent[0]["amount"] * 100000000 - 100000)
+        amount = int(unspent[0]["amount"] * COIN - 100000)
         tx.vout = [CTxOut(amount, scriptPubKey3)]
         tx.rehash()
         signed_tx = self.nodes[2].signrawtransactionwithwallet(binascii.hexlify(tx.serialize()).decode("utf-8"))
@@ -250,7 +251,7 @@ class AddressIndexTest(BitcoinTestFramework):
 
         tx2 = CTransaction()
         tx2.vin = [CTxIn(COutPoint(int(unspent[1]["txid"], 16), unspent[1]["vout"]))]
-        amount = int(unspent[1]["amount"] * 100000000 - 100000)
+        amount = int(unspent[1]["amount"] * COIN - 100000)
         tx2.vout = [
             CTxOut(int(amount / 4), scriptPubKey3),
             CTxOut(int(amount / 4), scriptPubKey3),
