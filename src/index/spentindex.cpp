@@ -83,11 +83,6 @@ bool SpentIndex::WriteChanges() {
 }
 
 void SpentIndex::UndoCoinSpend(const CTxIn& input) {
-
-    // TODO: This is dead code, as changes are never written.
-    // See GitHub issue #4
-    return;
-
     // undo and delete the spent index
     spentIndex.push_back(std::make_pair(
                 CSpentIndexKey(input.prevout.GetTxId(), input.prevout.GetN()),
