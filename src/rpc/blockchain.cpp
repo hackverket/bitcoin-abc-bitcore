@@ -2453,6 +2453,7 @@ static const ContextFreeRPCCommand commands[] = {
     { "hidden",             "waitfornewblock",                  waitfornewblock,                  {"timeout"} },
     { "hidden",             "waitforblock",                     waitforblock,                     {"blockhash","timeout"} },
     { "hidden",             "waitforblockheight",               waitforblockheight,               {"height","timeout"} },
+    { "hidden",             "getinfo",                          getblockchaininfo,                {} },
 };
 // clang-format on
 
